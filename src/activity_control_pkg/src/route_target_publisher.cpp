@@ -3,11 +3,13 @@
 #include <angles/angles.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <clocale>
 #include <cmath>
 #include <functional>
 #include <limits>
+#include <stdexcept>
 
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <tf2/LinearMath/Matrix3x3.h>
@@ -74,6 +76,7 @@ RouteTargetPublisherNode::RouteTargetPublisherNode(const rclcpp::NodeOptions & o
   enable_visual_align_for_low_z_targets_ =
     declare_parameter("enable_visual_align_for_low_z_targets", false);
   visual_align_z_threshold_cm_ = declare_parameter("visual_align_z_threshold_cm", 20.0);
+  laser_fire_duration_sec_ = declare_parameter("laser_fire_duration_sec", 1.0);
 
   tf_buffer_ = std::make_shared<tf2_ros::Buffer>(get_clock());
   tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -82,10 +85,16 @@ RouteTargetPublisherNode::RouteTargetPublisherNode(const rclcpp::NodeOptions & o
   target_pub_ = create_publisher<std_msgs::msg::Float32MultiArray>(output_topic_, qos);
   active_controller_pub_ = create_publisher<std_msgs::msg::UInt8>("/active_controller", qos);
   qr_task_active_pub_ = create_publisher<std_msgs::msg::Bool>("/qr_task_active", qos);
+  qr_laser_fire_pub_ = create_publisher<std_msgs::msg::Bool>("/qr/fire_laser", qos);
+  qr_inventory_pub_ =
+    create_publisher<std_msgs::msg::UInt8MultiArray>("/qr/inventory_data", qos);
 
   height_sub_ = create_subscription<std_msgs::msg::Int16>(
     "/height", rclcpp::QoS(10),
     std::bind(&RouteTargetPublisherNode::heightCallback, this, std::placeholders::_1));
+  qr_id_sub_ = create_subscription<std_msgs::msg::String>(
+    "/qr/id", rclcpp::QoS(10),
+    std::bind(&RouteTargetPublisherNode::qrIdCallback, this, std::placeholders::_1));
   qr_aligned_sub_ = create_subscription<std_msgs::msg::Bool>(
     "/qr/aligned", rclcpp::QoS(10),
     std::bind(&RouteTargetPublisherNode::qrAlignedCallback, this, std::placeholders::_1));
@@ -112,6 +121,8 @@ RouteTargetPublisherNode::RouteTargetPublisherNode(const rclcpp::NodeOptions & o
     fine_offset_limit_cm_,
     enable_visual_align_for_low_z_targets_ ? "true" : "false",
     visual_align_z_threshold_cm_);
+  publishQrTaskActive(false);
+  publishLaserFire(false);
 }
 
 void RouteTargetPublisherNode::addTarget(const Target & target)
@@ -163,10 +174,6 @@ void RouteTargetPublisherNode::publishTarget(const Target & target, bool init_fl
   active_msg.data = 2;
   active_controller_pub_->publish(active_msg);
 
-  std_msgs::msg::Bool qr_task_active_msg;
-  qr_task_active_msg.data = target.require_visual_align;
-  qr_task_active_pub_->publish(qr_task_active_msg);
-
   RCLCPP_INFO(
     get_logger(),
     "Published target: x=%.1fcm y=%.1fcm z=%.1fcm yaw=%.1fdeg qr_laser=%s invert_xy=%s yaw_only=%s%s",
@@ -180,10 +187,30 @@ void RouteTargetPublisherNode::publishTarget(const Target & target, bool init_fl
     init_flag ? " (first)" : "");
 }
 
+void RouteTargetPublisherNode::publishQrTaskActive(bool active)
+{
+  std_msgs::msg::Bool msg;
+  msg.data = active;
+  qr_task_active_pub_->publish(msg);
+}
+
+void RouteTargetPublisherNode::publishLaserFire(bool fire)
+{
+  std_msgs::msg::Bool msg;
+  msg.data = fire;
+  qr_laser_fire_pub_->publish(msg);
+}
+
 void RouteTargetPublisherNode::heightCallback(const std_msgs::msg::Int16::SharedPtr msg)
 {
   current_height_cm_ = static_cast<double>(msg->data);
   has_height_ = true;
+}
+
+void RouteTargetPublisherNode::qrIdCallback(const std_msgs::msg::String::SharedPtr msg)
+{
+  latest_qr_id_ = msg->data;
+  has_latest_qr_id_ = true;
 }
 
 void RouteTargetPublisherNode::qrAlignedCallback(const std_msgs::msg::Bool::SharedPtr msg)
@@ -277,11 +304,201 @@ bool RouteTargetPublisherNode::isYawOnlyTransition(std::size_t index) const
   return yaw_delta > 90.0;
 }
 
+void RouteTargetPublisherNode::resetQrStateForTarget()
+{
+  latest_qr_id_.clear();
+  has_latest_qr_id_ = false;
+  qr_aligned_ = false;
+  has_qr_aligned_ = false;
+  qr_fine_offset_body_cm_ = geometry_msgs::msg::Point{};
+  has_qr_fine_offset_ = false;
+  qr_code_recorded_ = false;
+  laser_fire_active_ = false;
+  fine_anchor_valid_ = false;
+  publishLaserFire(false);
+}
+
+std::string RouteTargetPublisherNode::currentQrSlotName() const
+{
+  const std::size_t index = qr_inventory_.size();
+  if (index >= 24) {
+    return "overflow";
+  }
+
+  const char row = static_cast<char>('A' + static_cast<int>(index / 6));
+  const int col = static_cast<int>(index % 6) + 1;
+  return std::string(1, row) + std::to_string(col);
+}
+
+bool RouteTargetPublisherNode::parseQrCodeByte(const std::string & text, std::uint8_t & value) const
+{
+  std::string trimmed;
+  for (char ch : text) {
+    if (!std::isspace(static_cast<unsigned char>(ch))) {
+      trimmed.push_back(ch);
+    }
+  }
+  if (trimmed.empty()) {
+    return false;
+  }
+
+  try {
+    std::size_t parsed_chars = 0;
+    const unsigned long parsed = std::stoul(trimmed, &parsed_chars, 0);
+    if (parsed_chars == trimmed.size() && parsed <= 255UL) {
+      value = static_cast<std::uint8_t>(parsed);
+      return true;
+    }
+  } catch (const std::exception &) {
+  }
+
+  value = static_cast<std::uint8_t>(trimmed.front());
+  return true;
+}
+
+void RouteTargetPublisherNode::advanceToNextTarget()
+{
+  publishQrTaskActive(false);
+  publishLaserFire(false);
+  qr_sequence_active_ = false;
+  laser_fire_active_ = false;
+  fine_anchor_valid_ = false;
+
+  ++current_idx_;
+  if (current_idx_ < targets_.size()) {
+    publishCurrent();
+  } else {
+    current_idx_ = targets_.size();
+    std_msgs::msg::UInt8 active_msg;
+    active_msg.data = 3;
+    active_controller_pub_->publish(active_msg);
+  }
+}
+
+bool RouteTargetPublisherNode::handleQrTarget(
+  const Target & target,
+  double x_cm,
+  double y_cm,
+  double z_cm)
+{
+  if (!qr_sequence_active_) {
+    qr_sequence_active_ = true;
+    resetQrStateForTarget();
+    publishQrTaskActive(true);
+    RCLCPP_INFO(
+      get_logger(), "QR task started for slot %s at target %zu.",
+      currentQrSlotName().c_str(), current_idx_);
+  } else {
+    publishQrTaskActive(true);
+  }
+
+  if (!qr_code_recorded_) {
+    if (!has_latest_qr_id_) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "Waiting for QR code at slot %s.", currentQrSlotName().c_str());
+      return true;
+    }
+
+    std::uint8_t value = 0;
+    if (!parseQrCodeByte(latest_qr_id_, value)) {
+      RCLCPP_WARN_THROTTLE(
+        get_logger(), *get_clock(), 2000,
+        "QR code is empty or invalid at slot %s.", currentQrSlotName().c_str());
+      return true;
+    }
+
+    const std::string slot_name = currentQrSlotName();
+
+    if (qr_inventory_.size() < 24) {
+      qr_inventory_.push_back(value);
+    } else {
+      qr_inventory_.back() = value;
+    }
+
+    std_msgs::msg::UInt8MultiArray inventory_msg;
+    inventory_msg.data = qr_inventory_;
+    qr_inventory_pub_->publish(inventory_msg);
+
+    qr_code_recorded_ = true;
+    RCLCPP_INFO(
+      get_logger(), "Recorded QR %s: raw='%s' value=%u (%zu/24).",
+      slot_name.c_str(), latest_qr_id_.c_str(),
+      static_cast<unsigned int>(value), qr_inventory_.size());
+  }
+
+  if (!has_qr_aligned_) {
+    RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Waiting for /qr/aligned.");
+    return true;
+  }
+
+  if (qr_aligned_) {
+    if (!laser_fire_active_) {
+      laser_fire_active_ = true;
+      laser_fire_start_time_ = now();
+      publishLaserFire(true);
+      RCLCPP_INFO(get_logger(), "QR aligned. Laser firing for %.1fs.", laser_fire_duration_sec_);
+      return true;
+    }
+
+    if ((now() - laser_fire_start_time_).seconds() < laser_fire_duration_sec_) {
+      publishLaserFire(true);
+      return true;
+    }
+
+    publishLaserFire(false);
+    RCLCPP_INFO(get_logger(), "Laser done. Advancing to next target.");
+    advanceToNextTarget();
+    return true;
+  }
+
+  if (!has_qr_fine_offset_) {
+    RCLCPP_WARN_THROTTLE(
+      get_logger(), *get_clock(), 2000, "Waiting for /qr/fine_offset_body_cm.");
+    return true;
+  }
+
+  const double hz = std::max(1.0, fine_target_publish_hz_);
+  const double min_period = 1.0 / hz;
+  const rclcpp::Time now_time = now();
+  if (
+    fine_last_publish_time_.nanoseconds() != 0 &&
+    (now_time - fine_last_publish_time_).seconds() < min_period)
+  {
+    return true;
+  }
+
+  const double body_dx_cm =
+    std::clamp(qr_fine_offset_body_cm_.x, -fine_offset_limit_cm_, fine_offset_limit_cm_);
+  const double body_dy_cm =
+    std::clamp(qr_fine_offset_body_cm_.y, -fine_offset_limit_cm_, fine_offset_limit_cm_);
+  const double body_dz_cm =
+    std::clamp(qr_fine_offset_body_cm_.z, -fine_offset_limit_cm_, fine_offset_limit_cm_);
+
+  if (!fine_anchor_valid_ || fine_anchor_target_idx_ != current_idx_) {
+    fine_anchor_valid_ = true;
+    fine_anchor_target_idx_ = current_idx_;
+    fine_anchor_x_cm_ = x_cm;
+    fine_anchor_y_cm_ = y_cm;
+    fine_anchor_z_cm_ = z_cm;
+  }
+
+  Target fine_target = target;
+  fine_target.x_cm = fine_anchor_x_cm_ + body_dx_cm;
+  fine_target.y_cm = fine_anchor_y_cm_ + body_dy_cm;
+  fine_target.z_cm = fine_anchor_z_cm_ + body_dz_cm;
+  publishTarget(fine_target, false);
+  fine_last_publish_time_ = now_time;
+  return true;
+}
+
 void RouteTargetPublisherNode::monitorTimerCallback()
 {
   std::lock_guard<std::mutex> lock(mutex_);
 
   if (current_idx_ != std::numeric_limits<std::size_t>::max() && current_idx_ >= targets_.size()) {
+    publishQrTaskActive(false);
+    publishLaserFire(false);
     std_msgs::msg::UInt8 active_msg;
     active_msg.data = 3;
     active_controller_pub_->publish(active_msg);
@@ -308,83 +525,21 @@ void RouteTargetPublisherNode::monitorTimerCallback()
     "Current target %zu: x=%.1f y=%.1f z=%.1f yaw=%.1f",
     current_idx_, target.x_cm, target.y_cm, target.z_cm, target.yaw_deg);
 
-  const bool require_visual_align = target.require_visual_align ||
-    (enable_visual_align_for_low_z_targets_ && target.z_cm <= visual_align_z_threshold_cm_);
+  if (isReached(target, x_cm, y_cm, z_cm, yaw_deg)) {
+    const bool require_visual_align = target.require_visual_align ||
+      (enable_visual_align_for_low_z_targets_ && target.z_cm <= visual_align_z_threshold_cm_);
 
-  if (
-    enable_visual_takeover_ && require_visual_align && isNearXY(target, x_cm, y_cm) &&
-    std::fabs(target.y_cm - y_cm) < 10.0)
-  {
-    if (!has_qr_aligned_) {
-      RCLCPP_WARN_THROTTLE(get_logger(), *get_clock(), 2000, "Waiting for /qr/aligned.");
+    if (require_visual_align && handleQrTarget(target, x_cm, y_cm, z_cm)) {
       return;
     }
 
-    if (qr_aligned_) {
-      fine_anchor_valid_ = false;
-      ++current_idx_;
-      if (current_idx_ < targets_.size()) {
-        publishCurrent();
-      } else {
-        current_idx_ = targets_.size();
-        std_msgs::msg::UInt8 active_msg;
-        active_msg.data = 3;
-        active_controller_pub_->publish(active_msg);
-      }
-      RCLCPP_INFO(get_logger(), "QR aligned. Advancing to next target.");
-      return;
-    }
-
-    if (!has_qr_fine_offset_) {
-      RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 2000, "Waiting for /qr/fine_offset_body_cm.");
-      return;
-    }
-
-    const double hz = std::max(1.0, fine_target_publish_hz_);
-    const double min_period = 1.0 / hz;
-    const rclcpp::Time now_time = now();
-    if (
-      fine_last_publish_time_.nanoseconds() != 0 &&
-      (now_time - fine_last_publish_time_).seconds() < min_period)
-    {
-      return;
-    }
-
-    const double body_dx_cm =
-      std::clamp(qr_fine_offset_body_cm_.x, -fine_offset_limit_cm_, fine_offset_limit_cm_);
-    const double body_dy_cm =
-      std::clamp(qr_fine_offset_body_cm_.y, -fine_offset_limit_cm_, fine_offset_limit_cm_);
-    const double body_dz_cm =
-      std::clamp(qr_fine_offset_body_cm_.z, -fine_offset_limit_cm_, fine_offset_limit_cm_);
-
-    if (!fine_anchor_valid_ || fine_anchor_target_idx_ != current_idx_) {
-      fine_anchor_valid_ = true;
-      fine_anchor_target_idx_ = current_idx_;
-      fine_anchor_x_cm_ = x_cm;
-      fine_anchor_y_cm_ = y_cm;
-      fine_anchor_z_cm_ = z_cm;
-    }
-
-    Target fine_target = target;
-    fine_target.x_cm = fine_anchor_x_cm_ + body_dx_cm;
-    fine_target.y_cm = fine_anchor_y_cm_ + body_dy_cm;
-    fine_target.z_cm = fine_anchor_z_cm_ + body_dz_cm;
-    publishTarget(fine_target, false);
-    fine_last_publish_time_ = now_time;
+    advanceToNextTarget();
     return;
   }
 
-  if (isReached(target, x_cm, y_cm, z_cm, yaw_deg)) {
-    ++current_idx_;
-    if (current_idx_ < targets_.size()) {
-      publishCurrent();
-    } else {
-      current_idx_ = targets_.size();
-      std_msgs::msg::UInt8 active_msg;
-      active_msg.data = 3;
-      active_controller_pub_->publish(active_msg);
-    }
+  if (!qr_sequence_active_) {
+    publishQrTaskActive(false);
+    publishLaserFire(false);
   }
 }
 

@@ -40,6 +40,8 @@ def generate_launch_description():
             "fine_offset_limit_cm:=15.0",
             "-p",
             "fine_target_publish_hz:=10.0",
+            "-p",
+            "laser_fire_duration_sec:=1.0",
         ],
     )
 
@@ -58,6 +60,7 @@ def generate_launch_description():
             {"enable_gui": False},
             {"decode_interval": 3},
             {"laser_pin": 10},
+            {"laser_duration_sec": 1.0},
             {"laser_task_active_required": True},
         ],
     )

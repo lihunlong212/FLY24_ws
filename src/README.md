@@ -58,7 +58,7 @@ source install/setup.bash
 关键文件：
 
 - `activity_control_pkg/include/activity_control_pkg/route_target_publisher.hpp`：定义 `Target` 结构体（坐标、高度、航向、是否需要视觉打激光、是否反向 XY 速度），以及两个节点类的接口与关键状态变量。
-- `activity_control_pkg/src/route_target_publisher.cpp`：核心逻辑文件，维护目标点队列 `targets_`，通过 TF 查询 `map -> laser_link` 获取当前位姿（高度来自 `/height`），发布 `/target_position`、`/active_controller`（固定为 2，表示 Drone/飞控）和 `/qr_task_active`，并在接近视觉目标时根据 `/qr/aligned` 与 `/qr/fine_offset_body_cm` 动态发布“微调后的目标点”，对准成功后立即切换到下一个目标。
+- `activity_control_pkg/src/route_target_publisher.cpp`：核心逻辑文件，维护目标点队列 `targets_`，通过 TF 查询 `map -> laser_link` 获取当前位姿（高度来自 `/height`），发布 `/target_position`、`/active_controller`（固定为 2，表示 Drone/飞控）和二维码任务门控；普通航点到达后直接切换，二维码航点到达后才启动识别、记录、视觉微调、激光点亮 1 秒，然后切换到下一个目标。
 - `activity_control_pkg/src/route_target_publisher_main.cpp`：`route_target_publisher_node` 的标准入口（初始化并 spin）。
 - `activity_control_pkg/src/route_test_node.cpp`：测试/演示入口，使用 `MultiThreadedExecutor` 同时运行目标发布节点与测试节点，并自动按数组顺序添加一系列目标点（部分目标点要求视觉对准）。
 
@@ -185,6 +185,7 @@ Launch：无。
 
 - `pid_control_pkg/include/pid_control_pkg/pid_controller.hpp`：定义 PID 控制器与位置控制节点的结构、状态与参数。
 - `pid_control_pkg/src/pid_controller.cpp`：核心控制逻辑，订阅 `/target_position`（6 元组：x_cm, y_cm, z_cm, yaw_deg, invert_xy_velocity, yaw_only），通过 TF 获取 `map -> laser_link` 的当前 XY 与 yaw（高度来自 `/height`），XY 方向采用“距离 -> 速度”的策略再按方向分解成 vx/vy；当 `invert_xy_velocity` 为 true 时，先等 yaw 到位，再将 vx/vy 取反输出；当 `yaw_only` 为 true 时，完全跳过 XY PID，只输出 0 的 vx/vy，并且只用 yaw 与高度判断该航点是否到达。`activity_control_pkg` 会自动把 yaw 从 0 到 180 或从 180 到 0 的航点标记为 `yaw_only`，也可以在数组里手动把最后一项设为 true。yaw 与 z 分别用独立 PID 控制，发布 `/target_velocity`（4 元组：vx_cm/s, vy_cm/s, vz_cm/s, vyaw_deg/s），并在目标高度非 0 但尚未收到高度数据时抑制 z 速度并打印节流警告。
+- 二维码盘点流程：航点数组中 `need_qr_laser=true` 的点会在到达后才启动 `/qr_task_active`，按 A1-A6、B1-B6、C1-C6、D1-D6 的顺序把 `/qr/id` 转成 `uint8_t` 并发布到 `/qr/inventory_data`；记录完成后用 `/qr/fine_offset_body_cm` 做视觉对准，`/qr/aligned=true` 后通过 `/qr/fire_laser` 控制 pin10 激光点亮 1 秒，再进入下一个航点。
 - `pid_control_pkg/launch/position_pid_controller.launch.py`：标准启动入口与参数模板。
 
 Launch：

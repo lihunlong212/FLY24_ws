@@ -37,6 +37,7 @@ class QRVisionNodeBase(Node):
         self.declare_parameter("decode_interval", 3)
         self.declare_parameter("laser_pin", -1)
         self.declare_parameter("laser_task_active_required", False)
+        self.declare_parameter("laser_duration_sec", 1.0)
 
         self.camera_device = self.get_parameter("camera_device").value
         self.eps_x = float(self.get_parameter("eps_x").value)
@@ -50,6 +51,7 @@ class QRVisionNodeBase(Node):
         self.laser_task_active_required = bool(
             self.get_parameter("laser_task_active_required").value
         )
+        self.laser_duration_sec = float(self.get_parameter("laser_duration_sec").value)
 
         prefix = topic_prefix.strip().rstrip("/")
         self.topic_prefix = prefix if prefix.startswith("/") else "/" + prefix
@@ -60,6 +62,9 @@ class QRVisionNodeBase(Node):
         self.image_pub = self.create_publisher(Image, f"{self.topic_prefix}/debug_image", 10)
         self.qr_task_active_sub = self.create_subscription(
             Bool, "/qr_task_active", self._qr_task_active_callback, 10
+        )
+        self.laser_fire_sub = self.create_subscription(
+            Bool, "/qr/fire_laser", self._laser_fire_callback, 10
         )
 
         self.camera_active = True
@@ -74,6 +79,8 @@ class QRVisionNodeBase(Node):
         self.stable_count = 0
         self.frame_count = 0
         self.previous_qr_data = ""
+        self.laser_is_on = False
+        self.laser_busy = False
         self.gpio_initialized = False
         self.should_show_window = False
 
@@ -100,16 +107,35 @@ class QRVisionNodeBase(Node):
         self.gpio_initialized = True
         self.get_logger().info(f"GPIO {self.laser_pin} initialized for laser output.")
 
-    def _fire_laser_worker(self) -> None:
+    def _set_laser(self, enabled: bool) -> None:
         if self.laser_pin == -1:
             return
         try:
-            self.get_logger().info(f"Laser pulse on pin {self.laser_pin}.")
-            wiringpi.digitalWrite(self.laser_pin, GPIO.LOW)
-            time.sleep(0.5)
-            wiringpi.digitalWrite(self.laser_pin, GPIO.HIGH)
+            wiringpi.digitalWrite(self.laser_pin, GPIO.LOW if enabled else GPIO.HIGH)
+            self.laser_is_on = enabled
         except Exception as exc:
-            self.get_logger().error(f"Laser pulse failed: {exc}")
+            self.get_logger().error(f"Laser write failed: {exc}")
+
+    def _fire_laser_worker(self) -> None:
+        if self.laser_pin == -1:
+            return
+        self.laser_busy = True
+        self.get_logger().info(
+            f"Laser firing on pin {self.laser_pin} for {self.laser_duration_sec:.2f}s."
+        )
+        self._set_laser(True)
+        time.sleep(max(0.0, self.laser_duration_sec))
+        self._set_laser(False)
+        self.laser_busy = False
+
+    def _laser_fire_callback(self, msg: Bool) -> None:
+        if not bool(msg.data):
+            self._set_laser(False)
+            self.laser_busy = False
+            return
+        if self.qr_task_active and not self.laser_busy:
+            self.laser_busy = True
+            threading.Thread(target=self._fire_laser_worker, daemon=True).start()
 
     def _qr_task_active_callback(self, msg: Bool) -> None:
         self.qr_task_active = bool(msg.data)
@@ -141,6 +167,11 @@ class QRVisionNodeBase(Node):
         img_cx = img_w / 2.0
         img_cy = img_h / 2.0
 
+        if not self.qr_task_active:
+            self.stable_count = 0
+            self.aligned_pub.publish(Bool(data=False))
+            return
+
         decoded_objects = []
         if self.frame_count % self.decode_interval == 0:
             decoded_objects = pyzbar.decode(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
@@ -166,11 +197,6 @@ class QRVisionNodeBase(Node):
                 self.stable_count = 0
 
             aligned = self.stable_count >= self.stable_frames
-            laser_ready = abs(ex) < self.eps_x_laser
-            if self.qr_task_active and laser_ready and qr_data != self.previous_qr_data:
-                threading.Thread(target=self._fire_laser_worker, daemon=True).start()
-                self.previous_qr_data = qr_data
-
             self.qr_id_pub.publish(String(data=qr_data))
             self.offset_pub.publish(Point(x=float(ex), y=float(ey), z=0.0))
 

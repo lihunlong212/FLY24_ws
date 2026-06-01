@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -11,7 +12,9 @@
 #include <std_msgs/msg/bool.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
 #include <std_msgs/msg/int16.hpp>
+#include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/u_int8.hpp>
+#include <std_msgs/msg/u_int8_multi_array.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 
@@ -41,15 +44,23 @@ public:
 private:
   void publishCurrent();
   void publishTarget(const Target & target, bool init_flag);
+  void publishQrTaskActive(bool active);
+  void publishLaserFire(bool fire);
 
   bool getCurrentPose(double & x_cm, double & y_cm, double & z_cm, double & yaw_deg);
   bool isReached(const Target & target, double x_cm, double y_cm, double z_cm, double yaw_deg)
     const;
   bool isYawOnlyTransition(std::size_t index) const;
   bool isNearXY(const Target & target, double x_cm, double y_cm) const;
+  bool handleQrTarget(const Target & target, double x_cm, double y_cm, double z_cm);
+  void advanceToNextTarget();
+  void resetQrStateForTarget();
+  bool parseQrCodeByte(const std::string & text, std::uint8_t & value) const;
+  std::string currentQrSlotName() const;
 
   void monitorTimerCallback();
   void heightCallback(const std_msgs::msg::Int16::SharedPtr msg);
+  void qrIdCallback(const std_msgs::msg::String::SharedPtr msg);
   void qrAlignedCallback(const std_msgs::msg::Bool::SharedPtr msg);
   void qrFineOffsetCallback(const geometry_msgs::msg::Point::SharedPtr msg);
 
@@ -60,7 +71,10 @@ private:
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr target_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr active_controller_pub_;
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr qr_task_active_pub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr qr_laser_fire_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt8MultiArray>::SharedPtr qr_inventory_pub_;
   rclcpp::Subscription<std_msgs::msg::Int16>::SharedPtr height_sub_;
+  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr qr_id_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr qr_aligned_sub_;
   rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr qr_fine_offset_sub_;
   rclcpp::TimerBase::SharedPtr monitor_timer_;
@@ -83,10 +97,18 @@ private:
   std::string laser_link_frame_;
   std::string output_topic_;
 
+  std::string latest_qr_id_;
+  bool has_latest_qr_id_{false};
   bool qr_aligned_{false};
   bool has_qr_aligned_{false};
   geometry_msgs::msg::Point qr_fine_offset_body_cm_{};
   bool has_qr_fine_offset_{false};
+  std::vector<std::uint8_t> qr_inventory_;
+  bool qr_sequence_active_{false};
+  bool qr_code_recorded_{false};
+  bool laser_fire_active_{false};
+  rclcpp::Time laser_fire_start_time_;
+  double laser_fire_duration_sec_{1.0};
 
   double visual_takeover_distance_cm_{10.0};
   double fine_offset_limit_cm_{15.0};
