@@ -1,0 +1,14 @@
+build/
+install/
+log/
+
+__pycache__/
+*.py[cod]
+*$py.class
+
+.pytest_cache/
+.coverage
+htmlcov/
+
+.vscode/
+.idea/
