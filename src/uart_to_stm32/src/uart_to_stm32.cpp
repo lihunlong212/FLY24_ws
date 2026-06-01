@@ -1,52 +1,24 @@
 #include "uart_to_stm32/uart_to_stm32.hpp"
 #include <iostream>
-
-#include <algorithm>
+  
 #include <chrono>
-#include <cctype>
 #include <cmath>
-#include <cstdlib>
-#include <thread>
 #include <utility>
 
-#include <tf2/LinearMath/Matrix3x3.h>
 #include <tf2/exceptions.h>
+#include <tf2/LinearMath/Matrix3x3.h>
 
 namespace uart_to_stm32
 {
 
 using namespace std::chrono_literals;
 
-namespace
-{
-void calculateChecksum(const std::vector<uint8_t> & frame_data, uint8_t & sum_check, uint8_t & add_check)
-{
-  sum_check = 0;
-  add_check = 0;
-  for (const uint8_t byte : frame_data) {
-    sum_check = static_cast<uint8_t>((sum_check + byte) & 0xFF);
-    add_check = static_cast<uint8_t>((add_check + sum_check) & 0xFF);
-  }
-}
-
-bool isSupportedRouteChoice(uint8_t route_id)
-{
-  return route_id == 1 || route_id == 2;
-}
-
-bool isSupportedLedDigit(int digit)
-{
-  return digit >= 0 && digit <= 5;
-}
-}  // namespace
-
 UartToStm32::UartToStm32(rclcpp::Node::SharedPtr node)
 : node_(std::move(node)),
   update_rate_(0.0),
   current_yaw_(0.0),
   yaw_valid_(false),
-  velocity_valid_(false),
-  route_task_active_(false),
+  velocity_valid_(false),   
   has_st_ready_pub_(false)
 {
   RCLCPP_INFO(node_->get_logger(), "UartToStm32 created");
@@ -63,27 +35,15 @@ UartToStm32::~UartToStm32()
   }
 }
 
-bool UartToStm32::initialize(
-  double update_rate,
-  const std::string & source_frame,
-  const std::string & target_frame,
-  bool target_velocity_forwarding_auto_enable)
+bool UartToStm32::initialize(double update_rate, const std::string & source_frame, const std::string & target_frame)
 {
   try {
     update_rate_ = update_rate;
     source_frame_ = source_frame;
     target_frame_ = target_frame;
-    route_task_active_ = target_velocity_forwarding_auto_enable;
 
     RCLCPP_INFO(node_->get_logger(), "UartToStm32 initialized with update rate: %.1f Hz", update_rate_);
-    if (route_task_active_) {
-      RCLCPP_INFO(
-        node_->get_logger(),
-        "Target velocity forwarding is auto-enabled; /route_choice is not required for this task.");
-    }
-    RCLCPP_INFO(
-      node_->get_logger(), "Looking for transform from '%s' to '%s'",
-      source_frame_.c_str(), target_frame_.c_str());
+    RCLCPP_INFO(node_->get_logger(), "Looking for transform from '%s' to '%s'", source_frame_.c_str(), target_frame_.c_str());
 
     serial_comm_ = std::make_unique<serial_comm::SerialComm>();
     if (!serial_comm_->initialize("/dev/ttyS6", 921600)) {
@@ -105,35 +65,26 @@ bool UartToStm32::initialize(
       "/velocity_map", 10,
       std::bind(&UartToStm32::velocityCallback, this, std::placeholders::_1));
 
-    route_choice_sub_ = node_->create_subscription<std_msgs::msg::UInt8>(
-      "/route_choice", 10,
-      std::bind(&UartToStm32::routeChoiceCallback, this, std::placeholders::_1));
-
     target_velocity_sub_ = node_->create_subscription<std_msgs::msg::Float32MultiArray>(
       "/target_velocity", 10,
       std::bind(&UartToStm32::targetVelocityCallback, this, std::placeholders::_1));
 
-    led_digit_sub_ = node_->create_subscription<std_msgs::msg::UInt8>(
-      "/led_digit", rclcpp::QoS(10),
-      std::bind(&UartToStm32::ledDigitCallback, this, std::placeholders::_1));
+    auto active_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
 
-    barcode_text_sub_ = node_->create_subscription<std_msgs::msg::String>(
-      "/barcode_text", rclcpp::QoS(10),
-      std::bind(&UartToStm32::barcodeTextCallback, this, std::placeholders::_1));
-
-      
-    mission_complete_sub_ = node_->create_subscription<std_msgs::msg::Empty>(
-      "/mission_complete", rclcpp::QoS(10),
-      std::bind(&UartToStm32::missionCompleteCallback, this, std::placeholders::_1));
+    active_controller_sub_ = node_->create_subscription<std_msgs::msg::UInt8>(
+      "/active_controller", active_qos,
+      std::bind(&UartToStm32::activeControllerCallback, this, std::placeholders::_1));
+    
+        // bluetooth_sub_ = node_->create_subscription<std_msgs::msg::UInt8MultiArray>(
+    //   "/bluetooth_data", 10,
+    //   std::bind(&UartToStm32::bluetoothCallback, this, std::placeholders::_1));
 
     height_pub_ = node_->create_publisher<std_msgs::msg::Int16>("/height", 10);
-    is_st_ready_pub_ =
-      node_->create_publisher<std_msgs::msg::UInt8>("/is_st_ready", rclcpp::QoS(10).transient_local());
+    is_st_ready_pub_ = node_->create_publisher<std_msgs::msg::UInt8>("/is_st_ready", rclcpp::QoS(10).transient_local());
     mission_step_pub_ = node_->create_publisher<std_msgs::msg::UInt8>("/mission_step", 10);
 
     has_st_ready_pub_ = false;
 
-    
     serial_comm_->start_protocol_receive(
       [this](uint8_t id, const std::vector<uint8_t> & data) { protocolDataHandler(id, data); },
       [this](const std::string & err) {
@@ -141,9 +92,7 @@ bool UartToStm32::initialize(
       });
 
     RCLCPP_INFO(node_->get_logger(), "UartToStm32 initialized successfully");
-    RCLCPP_INFO(
-      node_->get_logger(),
-      "Subscribed to /velocity_map, /route_choice, /target_velocity, /led_digit, /barcode_text, and /mission_complete topics");
+    RCLCPP_INFO(node_->get_logger(), "Subscribed to /velocity_map and /target_velocity topics");
     return true;
 
   } catch (const std::exception & e) {
@@ -197,33 +146,6 @@ void UartToStm32::processTfTransform(const geometry_msgs::msg::TransformStamped 
   }
 }
 
-void UartToStm32::routeChoiceCallback(const std_msgs::msg::UInt8::SharedPtr msg)
-{
-  const uint8_t route_id = msg->data;
-  if (!isSupportedRouteChoice(route_id)) {
-    RCLCPP_WARN_THROTTLE(
-      node_->get_logger(), *node_->get_clock(), 2000,
-      "Ignoring unsupported /route_choice=%u. Target velocity forwarding stays %s.",
-      static_cast<unsigned>(route_id),
-      route_task_active_ ? "enabled" : "disabled");
-    return;
-  }
-
-  if (!route_task_active_) {
-    route_task_active_ = true;
-    RCLCPP_INFO(
-      node_->get_logger(),
-      "Received /route_choice=%u. Target velocity forwarding to STM32 is now enabled for the active task.",
-      static_cast<unsigned>(route_id));
-    return;
-  }
-
-  RCLCPP_INFO_THROTTLE(
-    node_->get_logger(), *node_->get_clock(), 2000,
-    "Received /route_choice=%u while a route task is already active. Target velocity forwarding remains enabled.",
-    static_cast<unsigned>(route_id));
-}
-
 void UartToStm32::velocityCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
 {
   current_velocity_ = *msg;
@@ -247,6 +169,27 @@ void UartToStm32::velocityCallback(const geometry_msgs::msg::Twist::SharedPtr ms
     sendVelocityToSerial(transformed_vel);
   }
 }
+
+// void UartToStm32::bluetoothCallback(const std_msgs::msg::UInt8MultiArray::SharedPtr msg)
+// {
+//   if(msg->data.empty()) {
+//     RCLCPP_WARN(node_->get_logger(), "Received empty bluetooth_data message.");
+//     return;
+//   }
+//   constexpr uint8_t BLUETOOTH_FRAME_ID = 0x34;
+//   if(serial_comm_ && serial_comm_->is_open()) {
+//     if(serial_comm_->send_protocol_data(BLUETOOTH_FRAME_ID, static_cast<uint8_t>(msg->data.size()), msg->data)) {
+//       RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
+//         "Sent bluetooth data %d",msg->data[0]);
+//     } else {
+//       RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+//         "Failed to send bluetooth data: %s", serial_comm_->get_last_error().c_str());
+//     }  } 
+//     else {
+//       RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+//         "Serial port is not open, cannot send bluetooth data");
+//     }
+// }
 
 Eigen::Vector3d UartToStm32::transformVelocity(const Eigen::Vector3d & linear, double yaw)
 {
@@ -304,13 +247,6 @@ void UartToStm32::sendVelocityToSerial(const Eigen::Vector3d & transformed_veloc
 
 void UartToStm32::targetVelocityCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
 {
-  if (!route_task_active_) {
-    RCLCPP_INFO_THROTTLE(
-      node_->get_logger(), *node_->get_clock(), 5000,
-      "Dropping /target_velocity because there is no active route task yet.");
-    return;
-  }
-
   if (msg->data.size() < 4) {
     RCLCPP_WARN(node_->get_logger(),
       "Target velocity message should contain 4 float values [vx_cm/s, vy_cm/s, vz_cm/s, vyaw_deg/s]");
@@ -330,8 +266,7 @@ void UartToStm32::targetVelocityCallback(const std_msgs::msg::Float32MultiArray:
   sendTargetVelocityToSerial(vx_cm_per_s, vy_cm_per_s, vz_cm_per_s, vyaw_deg_per_s);
 }
 
-void UartToStm32::sendTargetVelocityToSerial(
-  float vx_cm_per_s, float vy_cm_per_s, float vz_cm_per_s, float vyaw_deg_per_s)
+void UartToStm32::sendTargetVelocityToSerial(float vx_cm_per_s, float vy_cm_per_s, float vz_cm_per_s, float vyaw_deg_per_s)
 {
   if (!serial_comm_ || !serial_comm_->is_open()) {
     RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
@@ -368,7 +303,7 @@ void UartToStm32::sendTargetVelocityToSerial(
   }
 }
 
-void UartToStm32::protocolDataHandler(uint8_t id, const std::vector<uint8_t> & data)   
+void UartToStm32::protocolDataHandler(uint8_t id, const std::vector<uint8_t> & data)
 {
   switch (id) {
     case ST_READY_QUERY_ID: {
@@ -395,6 +330,7 @@ void UartToStm32::protocolDataHandler(uint8_t id, const std::vector<uint8_t> & d
           is_st_ready_pub_->publish(msg);
           RCLCPP_INFO(node_->get_logger(), "Published /is_st_ready: 1 (from 0xF1 frame)");
         }
+        // sendA2ReadyResponse();
         has_st_ready_pub_ = true;
       } else {
         RCLCPP_DEBUG(node_->get_logger(), "0xF1 frame second byte != 1 (%u), ignoring", static_cast<unsigned>(second));
@@ -419,7 +355,7 @@ void UartToStm32::protocolDataHandler(uint8_t id, const std::vector<uint8_t> & d
       }
       break;
     }
-    case 0xB1: {
+    case 0xB1: {  // 飞控发送的目标速度数据
       if (data.size() < 8) {
         RCLCPP_WARN(node_->get_logger(),
                     "protocolDataHandler: ID 0xB1 data too short (expected 8, got %zu)", data.size());
@@ -429,8 +365,9 @@ void UartToStm32::protocolDataHandler(uint8_t id, const std::vector<uint8_t> & d
       int16_t vel_x = static_cast<int16_t>(data[0] | (data[1] << 8));
       int16_t vel_y = static_cast<int16_t>(data[2] | (data[3] << 8));
       int16_t vel_z = static_cast<int16_t>(data[4] | (data[5] << 8));
-      int16_t yaw = static_cast<int16_t>(data[6] | (data[7] << 8));
+      int16_t yaw   = static_cast<int16_t>(data[6] | (data[7] << 8));
 
+      // 每秒打印两次日志（500ms一次）
       RCLCPP_INFO_THROTTLE(node_->get_logger(), *node_->get_clock(), 1000,
         "[0xB1] Target Speed -> X:%d, Y:%d, Z:%d, Yaw:%d",
         vel_x, vel_y, vel_z, yaw);
@@ -445,143 +382,32 @@ void UartToStm32::protocolDataHandler(uint8_t id, const std::vector<uint8_t> & d
   }
 }
 
-void UartToStm32::sendLedDigitToSerial(uint8_t digit)
+void UartToStm32::sendA2ReadyResponse()
 {
   if (!serial_comm_ || !serial_comm_->is_open()) {
-    RCLCPP_WARN_THROTTLE(
-      node_->get_logger(), *node_->get_clock(), 5000,
-      "Serial port is not open, cannot send LED digit data");
+    RCLCPP_WARN_THROTTLE(node_->get_logger(), *node_->get_clock(), 5000,
+      "Serial port is not open, cannot send A2 ready response");
     return;
   }
 
-  std::vector<uint8_t> data(1, digit);
-  if (serial_comm_->send_protocol_data(LED_DIGIT_FRAME_ID, static_cast<uint8_t>(data.size()), data)) {
-    std::vector<uint8_t> frame_for_check{0xAA, 0xFF, LED_DIGIT_FRAME_ID, 0x01, digit};
-    uint8_t sum_check = 0;
-    uint8_t add_check = 0;
-    calculateChecksum(frame_for_check, sum_check, add_check);
-    RCLCPP_INFO(
-      node_->get_logger(),
-      "Sent LED digit frame: AA FF %02X 01 %02X %02X %02X",
-      static_cast<unsigned>(LED_DIGIT_FRAME_ID),
-      static_cast<unsigned>(digit),
-      static_cast<unsigned>(sum_check),
-      static_cast<unsigned>(add_check));
+  std::vector<uint8_t> data(9, 0x00);
+  data[0] = 0x01;
+  if (serial_comm_->send_protocol_data(A2_READY_RESP_ID, static_cast<uint8_t>(data.size()), data)) {
+    RCLCPP_INFO(node_->get_logger(), "Sent A2 ready response (len=9, first=0x01)");
   } else {
-    RCLCPP_WARN(
-      node_->get_logger(),
-      "Failed to send LED digit frame: %s",
-      serial_comm_->get_last_error().c_str());
+    RCLCPP_WARN(node_->get_logger(), "Failed to send A2 ready response: %s", serial_comm_->get_last_error().c_str());
   }
 }
 
-void UartToStm32::sendMissionCompleteToSerial()
+void UartToStm32::activeControllerCallback(const std_msgs::msg::UInt8::SharedPtr msg)
 {
-  if (!serial_comm_ || !serial_comm_->is_open()) {
-    RCLCPP_WARN_THROTTLE(
-      node_->get_logger(), *node_->get_clock(), 5000,
-      "Serial port is not open, cannot send mission complete data");
-    return;
-  }
-
-  std::vector<uint8_t> data(1, MISSION_COMPLETE_VALUE);
-  if (serial_comm_->send_protocol_data(MISSION_COMPLETE_FRAME_ID, static_cast<uint8_t>(data.size()), data)) {
-    RCLCPP_INFO(
-      node_->get_logger(),
-      "Sent mission complete frame: id=0x%02X value=0x%02X",
-      static_cast<unsigned>(MISSION_COMPLETE_FRAME_ID),
-      static_cast<unsigned>(MISSION_COMPLETE_VALUE));
-  } else {
-    RCLCPP_WARN(
-      node_->get_logger(),
-      "Failed to send mission complete frame: %s",
-      serial_comm_->get_last_error().c_str());
+  if (msg->data == 2) {
+    RCLCPP_INFO(node_->get_logger(), "Received active_controller = 2 (Drone Mode), sending A2 ready response 3 times.");
+    for (int i = 0; i < 3; ++i) {
+      sendA2ReadyResponse();
+      std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 间隔100ms发送一次
+    }
   }
 }
 
-void UartToStm32::ledDigitCallback(const std_msgs::msg::UInt8::SharedPtr msg)
-{
-  if (!isSupportedLedDigit(static_cast<int>(msg->data))) {
-    RCLCPP_WARN(
-      node_->get_logger(),
-      "Ignoring /led_digit=%u. Expected 0 to 5.",
-      static_cast<unsigned>(msg->data));
-    return;
-  }
-
-  RCLCPP_INFO(
-    node_->get_logger(),
-    "Received /led_digit=%u. Sending frame 0x%02X three times.",
-    static_cast<unsigned>(msg->data),
-    static_cast<unsigned>(LED_DIGIT_FRAME_ID));
-
-  for (int i = 0; i < 3; ++i) {
-    sendLedDigitToSerial(msg->data);
-    std::this_thread::sleep_for(100ms);
-  }
-}
-
-void UartToStm32::barcodeTextCallback(const std_msgs::msg::String::SharedPtr msg)
-{
-  std::string text = msg->data;
-  text.erase(
-    std::remove_if(
-      text.begin(),
-      text.end(),
-      [](unsigned char ch) { return std::isspace(ch) != 0; }),
-    text.end());
-
-  if (text.empty() || !std::all_of(text.begin(), text.end(), [](unsigned char ch) {
-      return std::isdigit(ch) != 0;
-    }))
-  {
-    RCLCPP_WARN(
-      node_->get_logger(),
-      "Ignoring /barcode_text='%s'. Expected numeric barcode content 0 to 5.",
-      msg->data.c_str());
-    return;
-  }
-
-  const int parsed_digit = std::atoi(text.c_str());
-  if (!isSupportedLedDigit(parsed_digit)) {
-    RCLCPP_WARN(
-      node_->get_logger(),
-      "Ignoring /barcode_text='%s'. Parsed value=%d, expected 0 to 5.",
-      msg->data.c_str(),
-      parsed_digit);
-    return;
-  }
-
-  const uint8_t digit = static_cast<uint8_t>(parsed_digit);
-  RCLCPP_INFO(
-    node_->get_logger(),
-    "Received /barcode_text='%s'. Sending frame 0x%02X digit=%u three times.",
-    msg->data.c_str(),
-    static_cast<unsigned>(LED_DIGIT_FRAME_ID),
-    static_cast<unsigned>(digit));
-
-  for (int i = 0; i < 3; ++i) {
-    sendLedDigitToSerial(digit);
-    std::this_thread::sleep_for(100ms);
-  }
-}
-
-void UartToStm32::missionCompleteCallback(const std_msgs::msg::Empty::SharedPtr)
-{
-  RCLCPP_INFO(
-    node_->get_logger(),
-    "Received mission complete event. Sending frame 0x%02X three times.",
-    static_cast<unsigned>(MISSION_COMPLETE_FRAME_ID));
-
-  for (int i = 0; i < 3; ++i) {
-    sendMissionCompleteToSerial();
-    std::this_thread::sleep_for(100ms);
-  }
-
-  route_task_active_ = false;
-  RCLCPP_INFO(
-    node_->get_logger(),
-    "Mission complete sent. Target velocity forwarding is now disabled until the next valid route start.");
-}
-
-}  // 命名空间 uart_to_stm32
+}  // namespace uart_to_stm32

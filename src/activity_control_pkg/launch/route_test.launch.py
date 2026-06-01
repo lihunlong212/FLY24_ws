@@ -15,18 +15,8 @@ def generate_launch_description():
     return LaunchDescription([
         Node(
             package="activity_control_pkg",
-            executable="route_target_publisher_node",
-            name="route_target_publisher",
+            executable="route_test_node",
+            name="route_test_node",
             output="screen",
-            parameters=[
-                {
-                    "map_frame": "map",
-                    "laser_link_frame": "laser_link",
-                    "output_topic": "/target_position",
-                    "position_tolerance_cm": 6.0,
-                    "yaw_tolerance_deg": 5.0,
-                    "height_tolerance_cm": 6.0,
-                }
-            ],
         )
     ])

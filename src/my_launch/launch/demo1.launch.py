@@ -1,159 +1,312 @@
 import os
-
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription, TimerAction, RegisterEventHandler, EmitEvent
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
-
-
-def _launch_path(package_name: str, filename: str) -> str:
-    package_share = FindPackageShare(package=package_name).find(package_name)
-    return os.path.join(package_share, "launch", filename)
-
+from launch_ros.actions import Node, LifecycleNode
+from launch.events import matches_action
+from launch_ros.events.lifecycle import ChangeState
+from lifecycle_msgs.msg import Transition
+from launch.event_handlers import OnProcessStart
+from launch_ros.event_handlers import OnStateTransition
 
 def generate_launch_description():
-    cartography_launch_args = {
-        "use_rviz": "false",
-    }
-
-    uart_params = {
-        "update_rate": 100.0,
-        "source_frame": "map",
-        "target_frame": "laser_link",
-        "target_velocity_forwarding_auto_enable": True,
-    }
-
-    pid_params = {
-        "control_frequency": 50.0,
-        "map_frame": "map",
-        "laser_link_frame": "laser_link",
-        "kp_xy": 0.8,
-        "ki_xy": 0.0,
-        "kd_xy": 0.2,
-        "kp_yaw": 1.0,
-        "ki_yaw": 0.0,
-        "kd_yaw": 0.2,
-        "kp_z": 1.0,
-        "ki_z": 0.0,
-        "kd_z": 0.2,
-        "max_linear_velocity": 33.0,
-        "max_angular_velocity": 30.0,
-        "max_vertical_velocity": 30.0,
-    }
-
-    route_params = {
-        "map_frame": "map",
-        "laser_link_frame": "laser_link",
-        "output_topic": "/target_position",
-        "position_tolerance_cm": 8.0,
-        "yaw_tolerance_deg": 8.0,
-        "height_tolerance_cm": 8.0,
-        "spray_decision_timeout_sec": 1.5,
-        "spray_data_stale_timeout_sec": 0.5,
-        "spray_flash_on_sec": 0.3,
-        "spray_flash_gap_sec": 0.3,
-        "laser_on_command": 1,
-        "laser_off_command": 2,
-    }
-
-    laser_params = {
-        "pin": 10,
-        "on_level": 0,
-        "off_level": 1,
-        "initial_off": True,
-        "pulse_duration": 0.3,
-        "command_topic": "/laser/cmd",
-        "status_topic": "/laser/status",
-    }
-
-    camera_params = {
-        "camera_device": "/dev/video2",
-        "frame_width": 640,
-        "frame_height": 480,
-        "fps": 15.0,
-        "window_name": "drone_camera_preview",
-        "center_roi_width": 50,
-        "center_roi_height": 50,
-        "green_h_min": 25,
-        "green_h_max": 100,
-        "green_s_min": 20,
-        "green_v_min": 40,
-        "green_pixel_threshold": 100,
-        "spray_allowed_topic": "/spray_allowed",
-    }
-
-    barcode_params = {
-        "camera_device": "/dev/video0",
-        "frame_width": 640,
-        "frame_height": 480,
-        "fps": 15.0,
-        "barcode_topic": "/barcode_text",
-        "show_preview": True,
-        "window_name": "barcode_camera_preview",
-        "publish_duplicates": False,
-        "stop_after_first_publish": True,
-    }
-
+    # 1. 获取包路径
+    my_carto_pkg_share = FindPackageShare(package='my_carto_pkg').find('my_carto_pkg')
+    uart_to_stm32_pkg_share = FindPackageShare(package='uart_to_stm32').find('uart_to_stm32')
+    pid_control_pkg_share = FindPackageShare(package='pid_control_pkg').find('pid_control_pkg')
+    activity_control_pkg_share = FindPackageShare(package='activity_control_pkg').find('activity_control_pkg')
+    
+    # 2. 定义 Launch 文件包含
     fly_carto_launch = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(_launch_path("my_carto_pkg", "fly_carto.launch.py")),
-        launch_arguments=cartography_launch_args.items(),
+        PythonLaunchDescriptionSource(
+            os.path.join(my_carto_pkg_share, 'launch', 'fly_carto.launch.py')
+        )       
     )
+    
+    uart_to_stm32_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(uart_to_stm32_pkg_share, 'launch', 'uart_to_stm32.launch.py')
+        )
+    )
+    
+    position_pid_controller_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(pid_control_pkg_share, 'launch', 'position_pid_controller.launch.py')
+        )
+    )   
 
-    uart_node = Node(
-        package="uart_to_stm32",
-        executable="uart_to_stm32_node",
-        name="uart_to_stm32",
-        output="screen",
-        parameters=[uart_params],
+    route_test_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(activity_control_pkg_share, 'launch', 'route_test.launch.py')
+        )
     )
+    
+    # # 3. 定义节点
+    # # [关键] 使用 LifecycleNode 以支持状态管理
+    # control_node_lifecycle = LifecycleNode(
+    #     package='pid_controller',
+    #     executable='control_node_lifecycle',
+    #     name='control_node_lifecycle',
+    #     namespace='',
+    #     output='screen',
+    # )
+    
+    # car_driver_node = Node(
+    #     package='car_driver',
+    #     executable='car_driver',
+    #     name='car_driver',
+    #     output='screen',
+    #     parameters=[
+    #         {'serial_port': '/dev/ttyUSB0'},
+    #         {'baudrate': 115200},
+    #         {'motor_type': 2},
+    #     ]
+    # )
+    
+    # openmv_bridge = Node(
+    #     package='openmv_bridge',
+    #     executable='openmv_bridge',
+    #     name='openmv_bridge',
+    #     output='screen'
+    # )
+    
+    # bluetooth_node = Node(
+    #     package='bluetooth',
+    #     executable='bluetooth_node',
+    #     name='bluetooth_node',
+    #     output='screen'
+    # )
 
-    position_pid_controller_node = Node(
-        package="pid_control_pkg",
-        executable="position_pid_controller",
-        name="position_pid_controller",
-        output="screen",
-        parameters=[pid_params],
-    )
+    # # 4. 定义生命周期事件
+    # # 定义 Configure 请求
+    # configure_request = EmitEvent(
+    #     event=ChangeState(
+    #         lifecycle_node_matcher=matches_action(control_node_lifecycle),
+    #         transition_id=Transition.TRANSITION_CONFIGURE
+    #     )
+    # )
 
-    route_node = Node(
-        package="activity_control_pkg",
-        executable="route_target_publisher_node",
-        name="route_target_publisher",
-        output="screen",
-        parameters=[route_params],
-    )
+    # # 定义 Activate 请求
+    # active_request = EmitEvent(
+    #     event=ChangeState(
+    #         lifecycle_node_matcher=matches_action(control_node_lifecycle),
+    #         transition_id=Transition.TRANSITION_ACTIVATE
+    #     )
+    # )
+    
+    # # 5. 定义事件处理器
+    # # 逻辑：节点启动 -> 等待 2 秒 -> 发送 Configure
+    # configure_handler = RegisterEventHandler(
+    #     OnProcessStart(
+    #         target_action=control_node_lifecycle,
+    #         on_start=[
+    #             TimerAction(
+    #                 period=2.0,
+    #                 actions=[configure_request]
+    #             )
+    #         ]
+    #     )
+    # )
 
-    laser_control_node = Node(
-        package="laser_control_pkg",
-        executable="laser_control_node",
-        name="laser_control_node",
-        output="screen",
-        parameters=[laser_params],
-    )
+    # # 逻辑：节点状态变为 inactive (即 Configure 完成) -> 发送 Activate
+    # activate_handler = RegisterEventHandler(
+    #     OnStateTransition(
+    #         target_lifecycle_node=control_node_lifecycle,
+    #         start_state='unconfigured',
+    #         goal_state='inactive',
+    #         entities=[active_request]
+    #     )
+    # )
 
-    drone_camera_node = Node(
-        package="drone_camera_pkg",
-        executable="drone_camera_node",
-        name="drone_camera_node",
-        output="screen",
-        parameters=[camera_params],
-    )
-
-    barcode_camera_node = Node(
-        package="barcode_camera_pkg",
-        executable="barcode_camera_node",
-        name="barcode_camera_node",
-        output="screen",
-        parameters=[barcode_params],
-    )
+    # # 6. 定义延时启动组 (3秒后启动)
+    # delayed_group = TimerAction(
+    #     period=3.0,
+    #     actions=[
+    #         # 先注册处理器，防止错过事件
+    #         configure_handler,
+    #         activate_handler,
+            
+    #         # 启动其他节点
+    #         uart_to_stm32_launch,
+    #         position_pid_controller_launch,
+    #         route_test_launch,
+    #         control_node_lifecycle,
+    #         car_driver_node,
+    #         openmv_bridge,
+    #         bluetooth_node,
+    #     ]
+    # )
 
     return LaunchDescription([
-        fly_carto_launch,
-        uart_node,
-        position_pid_controller_node,
-        route_node,
-        laser_control_node,
-        drone_camera_node,
-        barcode_camera_node,
+        fly_carto_launch, # 立即启动
+        uart_to_stm32_launch,
+        position_pid_controller_launch,
+        route_test_launch,
+        # control_node_lifecycle,
+        # openmv_bridge,      
+        # bluetooth_node,
     ])
+# import os
+# from launch import LaunchDescription
+# from launch.actions import IncludeLaunchDescription
+# from launch.launch_description_sources import PythonLaunchDescriptionSource
+# from launch_ros.substitutions import FindPackageShare
+# from launch_ros.actions import Node
+# from launch.events import matches_action
+# from launch_ros.actions import LifecycleNode
+# from launch_ros.events.lifecycle import ChangeState
+# from lifecycle_msgs.msg import Transition
+# from launch.event_handler import OnProcessStart, OnStateTransition
+# from launch.actions import RegisterEventHandler, TimerAction, EmitEvent
+
+# def generate_launch_description():
+#     my_carto_pkg_share = FindPackageShare(package='my_carto_pkg').find('my_carto_pkg')
+#     uart_to_stm32_pkg_share = FindPackageShare(package='uart_to_stm32').find('uart_to_stm32')
+#     pid_control_pkg_share = FindPackageShare(package='pid_control_pkg').find('pid_control_pkg')
+#     activity_control_pkg_share = FindPackageShare(package='activity_control_pkg').find('activity_control_pkg')
+#     # car_driver_share = FindPackageShare(package='car_driver').find('car_driver')
+#     fly_carto_launch = IncludeLaunchDescription(
+#         PythonLaunchDescriptionSource(
+#             os.path.join(my_carto_pkg_share, 'launch', 'fly_carto.launch.py')
+#         )       
+#     )
+    
+#     uart_to_stm32_launch = IncludeLaunchDescription(
+#         PythonLaunchDescriptionSource(
+#             os.path.join(uart_to_stm32_pkg_share, 'launch', 'uart_to_stm32.launch.py')
+#         )
+#     )
+    
+#     position_pid_controller_launch = IncludeLaunchDescription(
+#         PythonLaunchDescriptionSource(
+#             os.path.join(pid_control_pkg_share, 'launch', 'position_pid_controller.launch.py')
+#         )
+#     )   
+
+#     route_test_launch = IncludeLaunchDescription(
+#         PythonLaunchDescriptionSource(
+#             os.path.join(activity_control_pkg_share, 'launch', 'route_test.launch.py')
+#         )
+#     )
+    
+#     control_node_lifecycle = Node(
+#         package='pid_controller',
+#         executable='control_node_lifecycle',
+#         name='control_node_lifecycle',
+#         output='screen',
+#     )
+    
+#     car_driver_node = Node(
+#         package='car_driver',
+#         executable='car_driver',
+#         name='car_driver',
+#         output='screen',
+#         parameters=[
+#             {'serial_port': '/dev/ttyUSB1'},
+#             {'baudrate': 115200},
+#             {'motor_type': 2},
+#         ]
+#     )
+    
+#     openmv_bridge = Node(
+#         package='openmv_bridge',
+#         executable='openmv_bridge',
+#         name='openmv_bridge',
+#         output='screen'
+#     )
+    
+#     bluetooth_node = Node(
+#         package='bluetooth',
+#         executable='bluetooth_node',
+#         name='bluetooth_node',
+#         output='screen'
+#     )
+
+#     configure_request = EmitEvent(
+#         event=ChangeState(
+#             lifecycle_node_matcher = control_node_lifecycle,
+#             transition_id=Transition.TRANSITION_CONFIGURE
+#         )
+#     )
+
+#     active_request = EmitEvent(
+#         event=ChangeState(
+#             lifecycle_node_matcher = matches_action(control_node_lifecycle),
+#             transition_id=Transition.TRANSITION_ACTIVATE
+#         )
+#     )
+    
+#     configure_handler = RegisterEventHandler(
+#         OnProcessStart(
+#             target_action=control_node_lifecycle,
+#             on_start=[
+#                 TimerAction(
+#                     period=2.0,
+#                     actions=[configure_request]
+#                 )
+#             ]
+#         )
+#     )
+
+#     activate_handler = RegisterEventHandler(
+#         OnStateTransition(
+#             target_lifecycle_node=control_node_lifecycle,
+#             start_state='unconfigured',
+#             goal_state='inactive',
+#             entities=[active_request]
+#         )
+#     )
+
+#     delayed_group = TimerAction(
+#         period=3.0,
+#         actions=[
+#             uart_to_stm32_launch,
+#             position_pid_controller_launch,
+#             route_test_launch,
+#             control_node_lifecycle,
+#             car_driver_node,
+#             openmv_bridge,
+#             bluetooth_node,
+#             configure_handler,
+#             activate_handler
+#         ]
+#     )
+
+#     # delayed_configure_event = TimerAction(
+#     #     period=5.0,
+#     #     actions=[
+#     #         EmitEvent(
+#     #             event=ChangeState(
+#     #                 lifecycle_node=car_driver_node,
+#     #                 transition=Transition.TRANSITION_CONFIGURE
+#     #             )
+#     #         )
+#     #     ]
+#     # )
+    
+#     # activate_event_handler = RegisterEventHandler(
+#     #     event_handler=launch.event_handlers.OnStateTransition(
+#     #         target_lifecycle_node=car_driver_node,
+#     #         start_state='inactive',
+#     #         goal_state='active',
+#     #         entities=[
+#     #             EmitEvent(
+#     #                 event=ChangeState(
+#     #                     lifecycle_node=car_driver_node,
+#     #                     transition=Transition.TRANSITION_ACTIVATE
+#     #                 )
+#     #             )
+#     #         ]
+#     #     )   
+#     # )
+
+#     # car_driver_launch = IncludeLaunchDescription(
+#     #     PythonLaunchDescriptionSource(
+#     #         os.path.join(car_driver_share, 'launch', 'car_drive.launch.py')
+#     #     )
+#     # )
+#     return LaunchDescription([
+#         fly_carto_launch,
+#         delayed_group
+#     ])

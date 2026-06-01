@@ -15,37 +15,14 @@ find_package(std_msgs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(serial_comm REQUIRED)
 
-add_library(uart_to_stm32_lib
-  src/uart_to_stm32.cpp
-)
-
-target_include_directories(uart_to_stm32_lib PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-  ${EIGEN3_INCLUDE_DIRS}
-)
-
-ament_target_dependencies(uart_to_stm32_lib
-  rclcpp
-  tf2
-  tf2_ros
-  tf2_geometry_msgs
-  geometry_msgs
-  std_msgs
-  serial_comm
-)
-
 add_executable(uart_to_stm32_node
   src/uart_to_stm32_node.cpp
+  src/uart_to_stm32.cpp
 )
 
 target_include_directories(uart_to_stm32_node PRIVATE
   include
   ${EIGEN3_INCLUDE_DIRS}
-)
-
-target_link_libraries(uart_to_stm32_node
-  uart_to_stm32_lib
 )
 
 ament_target_dependencies(uart_to_stm32_node
@@ -56,13 +33,6 @@ ament_target_dependencies(uart_to_stm32_node
   geometry_msgs
   std_msgs
   serial_comm
-)
-
-install(TARGETS uart_to_stm32_lib
-  EXPORT export_uart_to_stm32
-  ARCHIVE DESTINATION lib
-  LIBRARY DESTINATION lib
-  RUNTIME DESTINATION lib/${PROJECT_NAME}
 )
 
 install(TARGETS uart_to_stm32_node
@@ -78,7 +48,6 @@ install(DIRECTORY launch/
 )
 
 ament_export_include_directories(include)
-ament_export_targets(export_uart_to_stm32 HAS_LIBRARY_TARGET)
 ament_export_dependencies(
   rclcpp
   tf2

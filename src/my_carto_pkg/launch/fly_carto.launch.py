@@ -16,19 +16,20 @@
 """
 
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, TimerAction
-from launch.conditions import IfCondition
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess, TimerAction
+from launch.conditions import IfCondition, UnlessCondition
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch_ros.actions import Node, SetRemap
 from launch_ros.substitutions import FindPackageShare
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.actions import Shutdown
 import os
 
 def generate_launch_description():
     ## ***** Launch arguments *****
     lidar_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(FindPackageShare('bluesea2').find('bluesea2'), 'launch', 'uart_lidar.launch')
+            os.path.join(FindPackageShare('bluesea2').find('bluesea2'), 'launch', 'udp_lidar.launch')
         )
     )
 
@@ -39,9 +40,6 @@ def generate_launch_description():
     with open(urdf_file, 'r') as infp:
         robot_desc = infp.read()
 
-    rviz_config_file = os.path.join(pkg_share, 'rviz', 'cartographer.rviz')
-    use_rviz = LaunchConfiguration('use_rviz')
-
     ## ***** Nodes *****
     robot_state_publisher_node = Node(
         package = 'robot_state_publisher',
@@ -51,7 +49,6 @@ def generate_launch_description():
             {'use_sim_time': False}],
         output = 'screen'
         )
-
 
     cartographer_node = Node(
         package = 'cartographer_ros',
@@ -65,31 +62,7 @@ def generate_launch_description():
         output = 'screen'
         )
 
-    cartographer_occupancy_grid_node = Node(
-        package='cartographer_ros',
-        executable='cartographer_occupancy_grid_node',
-        name='cartographer_occupancy_grid_node',
-        output='screen',
-        parameters=[{'use_sim_time': False}],
-        arguments=['-resolution', '0.05', '-publish_period_sec', '1.0']
-    )
-
-    rviz_node = Node(
-        package='rviz2',
-        executable='rviz2',
-        name='rviz2',
-        arguments=['-d', rviz_config_file],
-        parameters=[{'use_sim_time': False}],
-        output='screen',
-        condition=IfCondition(use_rviz)
-    )
-
     return LaunchDescription([
-        DeclareLaunchArgument(
-            'use_rviz',
-            default_value='true',
-            description='Whether to launch RViz for live mapping visualization.'
-        ),
         # Step 1: Launch lidar_launch
         TimerAction(
             period=0.0,  # Immediately
@@ -100,14 +73,9 @@ def generate_launch_description():
             period=1.0,
             actions=[robot_state_publisher_node]
         ),
-        # Step 3: Launch cartographer_node after 10 seconds
+        # Step 3: Launch cartographer_node after 4 seconds
         TimerAction(
             period=10.0,
-            actions=[cartographer_node, cartographer_occupancy_grid_node]
-        ),
-        # Step 4: Launch rviz2
-        TimerAction(
-            period=12.0,
-            actions=[rviz_node]
+            actions=[cartographer_node]
         ),
     ])

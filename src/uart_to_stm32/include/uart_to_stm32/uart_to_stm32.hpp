@@ -10,14 +10,13 @@
 #include <rclcpp/rclcpp.hpp>
 #include <geometry_msgs/msg/transform_stamped.hpp>
 #include <geometry_msgs/msg/twist.hpp>
-#include <std_msgs/msg/empty.hpp>
 #include <std_msgs/msg/float32_multi_array.hpp>
 #include <std_msgs/msg/int16.hpp>
-#include <std_msgs/msg/string.hpp>
 #include <std_msgs/msg/u_int8.hpp>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
+#include <std_msgs/msg/u_int8_multi_array.hpp>
 #include <serial_comm/serial_comm.h>
 
 namespace uart_to_stm32
@@ -29,26 +28,18 @@ public:
   explicit UartToStm32(rclcpp::Node::SharedPtr node);
   ~UartToStm32();
 
-  bool initialize(
-    double update_rate,
-    const std::string & source_frame,
-    const std::string & target_frame,
-    bool target_velocity_forwarding_auto_enable);
+  bool initialize(double update_rate, const std::string & source_frame, const std::string & target_frame);
 
 private:
   void lookupTransform();
   void processTfTransform(const geometry_msgs::msg::TransformStamped & transform);
-  void routeChoiceCallback(const std_msgs::msg::UInt8::SharedPtr msg);
   void velocityCallback(const geometry_msgs::msg::Twist::SharedPtr msg);
   void targetVelocityCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg);
   Eigen::Vector3d transformVelocity(const Eigen::Vector3d & linear, double yaw);
   void sendVelocityToSerial(const Eigen::Vector3d & transformed_velocity);
   void sendTargetVelocityToSerial(float vx_cm_per_s, float vy_cm_per_s, float vz_cm_per_s, float vyaw_deg_per_s);
-  void sendLedDigitToSerial(uint8_t digit);
-  void sendMissionCompleteToSerial();
-  void ledDigitCallback(const std_msgs::msg::UInt8::SharedPtr msg);
-  void barcodeTextCallback(const std_msgs::msg::String::SharedPtr msg);
-  void missionCompleteCallback(const std_msgs::msg::Empty::SharedPtr msg);
+  void sendA2ReadyResponse();
+  void activeControllerCallback(const std_msgs::msg::UInt8::SharedPtr msg);
   void protocolDataHandler(uint8_t id, const std::vector<uint8_t> & data);
 
   rclcpp::Node::SharedPtr node_;
@@ -60,11 +51,9 @@ private:
   std::string target_frame_;
 
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr velocity_sub_;
-  rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr route_choice_sub_;
   rclcpp::Subscription<std_msgs::msg::Float32MultiArray>::SharedPtr target_velocity_sub_;
-  rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr led_digit_sub_;
-  rclcpp::Subscription<std_msgs::msg::String>::SharedPtr barcode_text_sub_;
-  rclcpp::Subscription<std_msgs::msg::Empty>::SharedPtr mission_complete_sub_;
+  rclcpp::Subscription<std_msgs::msg::UInt8MultiArray>::SharedPtr bluetooth_sub_;
+  rclcpp::Subscription<std_msgs::msg::UInt8>::SharedPtr active_controller_sub_;
 
   std::unique_ptr<serial_comm::SerialComm> serial_comm_;
 
@@ -72,21 +61,19 @@ private:
   rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr is_st_ready_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr mission_step_pub_;
 
+  void bluetoothCallback(const std_msgs::msg::UInt8MultiArray::SharedPtr msg);
   double current_yaw_;
   bool yaw_valid_;
   geometry_msgs::msg::Twist current_velocity_;
   bool velocity_valid_;
-  bool route_task_active_;
   bool has_st_ready_pub_;
 
   static constexpr uint8_t VELOCITY_FRAME_ID = 0x32;
   static constexpr uint8_t TARGET_VELOCITY_FRAME_ID = 0x31;
   static constexpr uint8_t ST_READY_QUERY_ID = 0xF1;
-  static constexpr uint8_t LED_DIGIT_FRAME_ID = 0x12;
-  static constexpr uint8_t MISSION_COMPLETE_FRAME_ID = 0x66;
-  static constexpr uint8_t MISSION_COMPLETE_VALUE = 0x06;
+  static constexpr uint8_t A2_READY_RESP_ID = 0xA2;
 };
 
-}  // 命名空间 uart_to_stm32
+}  // namespace uart_to_stm32
 
-#endif  // 头文件保护宏 UART_TO_STM32__UART_TO_STM32_HPP_
+#endif  // UART_TO_STM32__UART_TO_STM32_HPP_
