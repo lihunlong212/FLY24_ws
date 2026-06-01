@@ -35,8 +35,8 @@ class QRFineTuneNode(Node):
         super().__init__("qr_fine_tune_node")
 
         # 参数：输入/输出话题
-        self.declare_parameter("input_prefix", "/qr_right")
-        self.declare_parameter("output_topic", "/qr_right/fine_offset_body_cm")
+        self.declare_parameter("input_prefix", "/qr")
+        self.declare_parameter("output_topic", "/qr/fine_offset_body_cm")
 
         # 参数：发布频率与滤波/限幅（用于防抖：避免目标频繁跳动）
         self.declare_parameter("publish_hz", 10.0)          # 建议 5~10Hz
@@ -194,6 +194,5 @@ def main(args=None) -> None:
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
 
 

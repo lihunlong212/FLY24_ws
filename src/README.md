@@ -39,7 +39,7 @@ source install/setup.bash
 
 - 雷达数据：`bluesea2` 发布 `/scan`（以及可选点云）。
 - 任务目标：`activity_control_pkg` 发布 `/target_position`，并通过 `/active_controller` 指定当前由“车/飞控”谁来执行。
-- 视觉辅助：`opencv01` 发布 `/qr_left/*` 与 `/qr_right/*` 话题，提供“是否对准”和“微调偏移量”。
+- 视觉辅助：`opencv01` 使用单摄像头 `/dev/video0`，发布 `/qr/*` 话题，提供“是否对准”和“微调偏移量”。
 - 速度生成：`pid_control_pkg` 订阅 `/target_position`，发布 `/target_velocity`（速度指令）。
 - 串口桥接：`uart_to_stm32` 将速度与状态通过串口协议与 STM32/飞控交互，并发布 `/height`、`/is_st_ready`、`/mission_step`。
 - OpenMV -> 蓝牙链路：`openmv_bridge` 发布 `/openmv_data`，`bluetooth` 处理后发布 `/bluetooth_data` 并回传预测位置。
@@ -57,10 +57,10 @@ source install/setup.bash
 
 关键文件：
 
-- `activity_control_pkg/include/activity_control_pkg/route_target_publisher.hpp`：定义 `Target` 结构体（含 `require_visual_align` 和 `camera_side`），以及两个节点类的接口与关键状态变量。
-- `activity_control_pkg/src/route_target_publisher.cpp`：核心逻辑文件，维护目标点队列 `targets_`，通过 TF 查询 `map -> laser_link` 获取当前位姿（高度来自 `/height`），发布 `/target_position`、`/active_controller`（固定为 2，表示 Drone/飞控）与 `/current_target_camera`，并在接近视觉目标时根据 `/qr_left/*` 或 `/qr_right/*` 的对准状态与微调偏移动态发布“微调后的目标点”，对准成功后立即切换到下一个目标。
+- `activity_control_pkg/include/activity_control_pkg/route_target_publisher.hpp`：定义 `Target` 结构体（坐标、高度、航向、是否需要视觉对准），以及两个节点类的接口与关键状态变量。
+- `activity_control_pkg/src/route_target_publisher.cpp`：核心逻辑文件，维护目标点队列 `targets_`，通过 TF 查询 `map -> laser_link` 获取当前位姿（高度来自 `/height`），发布 `/target_position`、`/active_controller`（固定为 2，表示 Drone/飞控），并在接近视觉目标时根据 `/qr/aligned` 与 `/qr/fine_offset_body_cm` 动态发布“微调后的目标点”，对准成功后立即切换到下一个目标。
 - `activity_control_pkg/src/route_target_publisher_main.cpp`：`route_target_publisher_node` 的标准入口（初始化并 spin）。
-- `activity_control_pkg/src/route_test_node.cpp`：测试/演示入口，使用 `MultiThreadedExecutor` 同时运行目标发布节点与测试节点，并自动按顺序添加一系列目标点（部分目标点要求视觉对准并指定相机侧别）。
+- `activity_control_pkg/src/route_test_node.cpp`：测试/演示入口，使用 `MultiThreadedExecutor` 同时运行目标发布节点与测试节点，并自动按数组顺序添加一系列目标点（部分目标点要求视觉对准）。
 
 Launch：
 
@@ -155,9 +155,9 @@ Launch：
 
 关键文件：
 
-- `opencv01/opencv01/decoder_common.py`：二维码识别基类（核心），打开摄像头并按 `decode_interval` 降频解码，发布 `{prefix}/id`、`{prefix}/offset_norm`、`{prefix}/aligned`、`{prefix}/debug_image`，订阅 `/current_target_camera` 以只在匹配的相机侧别上工作，支持 GPIO 激光控制（二维码 ID 变化且进入对准窗口时触发一次激光脉冲线程），并支持运行时动态开关 GUI 窗口显示。
-- `opencv01/opencv01/decoder_right.py`：右相机入口，使用前缀 `/qr_right`，默认设备 `/dev/video0`，激光引脚设为 10。
-- `opencv01/opencv01/decoder_left.py`：左相机入口，使用前缀 `/qr_left`，默认设备 `/dev/video2`，激光引脚设为 13。
+- `opencv01/opencv01/decoder_common.py`：二维码识别基类（核心），打开摄像头并按 `decode_interval` 降频解码，发布 `{prefix}/id`、`{prefix}/offset_norm`、`{prefix}/aligned`、`{prefix}/debug_image`，支持 GPIO pin10 激光控制（二维码 ID 变化且进入对准窗口时触发一次激光脉冲线程），并支持运行时动态开关 GUI 窗口显示。
+- `opencv01/opencv01/decoder_right.py`：当前单摄像头入口，使用前缀 `/qr`，默认设备 `/dev/video0`，激光引脚为 10。
+- `opencv01/opencv01/decoder_left.py`：兼容入口，转到同一个单摄像头逻辑。
 - `opencv01/opencv01/qr_fine_tune.py`：视觉微调节点，订阅 `{input_prefix}/offset_norm` 与 `{input_prefix}/aligned`，对偏移做死区、EMA 滤波、步长限制与限幅后输出 `{output_topic}`（机体系 cm 级微调量），且在已对准时可持续输出 0 并重置内部状态以避免历史残留。
 - `opencv01/opencv01/decoder.py`：较早期的单节点识别脚本，直接读取摄像头并发布 `/qr_processed_image`、`/qr_code_data`、`/qr_code_position`。
 
