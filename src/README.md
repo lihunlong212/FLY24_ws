@@ -184,7 +184,7 @@ Launch：无。
 关键文件：
 
 - `pid_control_pkg/include/pid_control_pkg/pid_controller.hpp`：定义 PID 控制器与位置控制节点的结构、状态与参数。
-- `pid_control_pkg/src/pid_controller.cpp`：核心控制逻辑，订阅 `/target_position`（5 元组：x_cm, y_cm, z_cm, yaw_deg, invert_xy_velocity），通过 TF 获取 `map -> laser_link` 的当前 XY 与 yaw（高度来自 `/height`），XY 方向采用“距离 -> 速度”的策略再按方向分解成 vx/vy；当 `invert_xy_velocity` 为 true 时，先等 yaw 到位，再将 vx/vy 取反输出。yaw 与 z 分别用独立 PID 控制，发布 `/target_velocity`（4 元组：vx_cm/s, vy_cm/s, vz_cm/s, vyaw_deg/s），并在目标高度非 0 但尚未收到高度数据时抑制 z 速度并打印节流警告。
+- `pid_control_pkg/src/pid_controller.cpp`：核心控制逻辑，订阅 `/target_position`（6 元组：x_cm, y_cm, z_cm, yaw_deg, invert_xy_velocity, yaw_only），通过 TF 获取 `map -> laser_link` 的当前 XY 与 yaw（高度来自 `/height`），XY 方向采用“距离 -> 速度”的策略再按方向分解成 vx/vy；当 `invert_xy_velocity` 为 true 时，先等 yaw 到位，再将 vx/vy 取反输出；当 `yaw_only` 为 true 时，完全跳过 XY PID，只输出 0 的 vx/vy，并且只用 yaw 与高度判断该航点是否到达。`activity_control_pkg` 会自动把 yaw 从 0 到 180 或从 180 到 0 的航点标记为 `yaw_only`，也可以在数组里手动把最后一项设为 true。yaw 与 z 分别用独立 PID 控制，发布 `/target_velocity`（4 元组：vx_cm/s, vy_cm/s, vz_cm/s, vyaw_deg/s），并在目标高度非 0 但尚未收到高度数据时抑制 z 速度并打印节流警告。
 - `pid_control_pkg/launch/position_pid_controller.launch.py`：标准启动入口与参数模板。
 
 Launch：

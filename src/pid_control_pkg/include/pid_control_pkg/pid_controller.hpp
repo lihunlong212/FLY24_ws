@@ -116,6 +116,7 @@ private:
   double target_z_cm_;
   double target_yaw_deg_;
   bool invert_xy_velocity_;
+  bool yaw_only_target_;
   bool has_target_position_;
   bool has_target_height_;
 

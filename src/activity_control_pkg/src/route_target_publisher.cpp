@@ -24,25 +24,26 @@ constexpr double kDefaultTimerPeriodSec = 0.05;
 
 const std::vector<Target> & demoRoute()
 {
-  // {x_cm, y_cm, z_cm, yaw_deg, need_qr_laser, invert_xy_velocity}
+  // {x_cm, y_cm, z_cm, yaw_deg, need_qr_laser, invert_xy_velocity, yaw_only}
+  // yaw_only can be set manually; 0 <-> 180 deg transitions are detected automatically.
   static const std::vector<Target> route = {
-    {0.0, 0.0, 130.0, 0.0, false, false},
-    {0.0, 0.0, 130.0, 0.0, false, false},
-    {120.0, 0.0, 130.0, 0.0, true, false},
-    {170.0, 0.0, 130.0, 0.0, true, false},
-    {230.0, 0.0, 130.0, 0.0, true, false},
-    {240.0, 0.0, 75.0, 0.0, true, false},
-    {170.0, 0.0, 83.0, 0.0, true, false},
-    {120.0, 0.0, 83.0, 0.0, true, false},
-    {0.0, 0.0, 83.0, 0.0, false, false},
-    {0.0, -96.0, 87.0, 0.0, false, false},
-    {170.0, -96.0, 87.0, 0.0, false, false},
-    {235.0, -96.0, 87.0, 0.0, false, false},
-    {240.0, -96.0, 130.0, 0.0, false, false},
-    {170.0, -96.0, 130.0, 0.0, false, false},
-    {120.0, -96.0, 130.0, 0.0, false, false},
-    {0.0, -96.0, 130.0, 0.0, false, false},
-    {0.0, -96.0, 4.0, 0.0, false, false},
+    {0.0, 0.0, 130.0, 0.0, false, false, false},
+    {0.0, 0.0, 130.0, 0.0, false, false, false},
+    {120.0, 0.0, 130.0, 0.0, true, false, false},
+    {170.0, 0.0, 130.0, 0.0, true, false, false},
+    {230.0, 0.0, 130.0, 0.0, true, false, false},
+    {240.0, 0.0, 75.0, 0.0, true, false, false},
+    {170.0, 0.0, 83.0, 0.0, true, false, false},
+    {120.0, 0.0, 83.0, 0.0, true, false, false},
+    {0.0, 0.0, 83.0, 0.0, false, false, false},
+    {0.0, -96.0, 87.0, 0.0, false, false, false},
+    {170.0, -96.0, 87.0, 0.0, false, false, false},
+    {235.0, -96.0, 87.0, 0.0, false, false, false},
+    {240.0, -96.0, 130.0, 0.0, false, false, false},
+    {170.0, -96.0, 130.0, 0.0, false, false, false},
+    {120.0, -96.0, 130.0, 0.0, false, false, false},
+    {0.0, -96.0, 130.0, 0.0, false, false, false},
+    {0.0, -96.0, 4.0, 0.0, false, false, false},
   };
   return route;
 }
@@ -134,7 +135,9 @@ std::size_t RouteTargetPublisherNode::size() const
 void RouteTargetPublisherNode::publishCurrent()
 {
   if (current_idx_ != std::numeric_limits<std::size_t>::max() && current_idx_ < targets_.size()) {
-    publishTarget(targets_[current_idx_], current_idx_ == 0);
+    Target target = targets_[current_idx_];
+    target.yaw_only = target.yaw_only || isYawOnlyTransition(current_idx_);
+    publishTarget(target, current_idx_ == 0);
   }
 }
 
@@ -147,6 +150,7 @@ void RouteTargetPublisherNode::publishTarget(const Target & target, bool init_fl
     static_cast<float>(target.z_cm),
     static_cast<float>(target.yaw_deg),
     target.invert_xy_velocity ? 1.0f : 0.0f,
+    target.yaw_only ? 1.0f : 0.0f,
   };
   target_pub_->publish(message);
 
@@ -160,13 +164,14 @@ void RouteTargetPublisherNode::publishTarget(const Target & target, bool init_fl
 
   RCLCPP_INFO(
     get_logger(),
-    "Published target: x=%.1fcm y=%.1fcm z=%.1fcm yaw=%.1fdeg qr_laser=%s invert_xy=%s%s",
+    "Published target: x=%.1fcm y=%.1fcm z=%.1fcm yaw=%.1fdeg qr_laser=%s invert_xy=%s yaw_only=%s%s",
     target.x_cm,
     target.y_cm,
     target.z_cm,
     target.yaw_deg,
     target.require_visual_align ? "true" : "false",
     target.invert_xy_velocity ? "true" : "false",
+    target.yaw_only ? "true" : "false",
     init_flag ? " (first)" : "");
 }
 
@@ -235,6 +240,10 @@ bool RouteTargetPublisherNode::isReached(
   const bool xy_ok = dxy <= pos_tol_cm_;
   const bool yaw_ok = std::fabs(dyaw) <= yaw_tol_deg_;
 
+  if (target.yaw_only) {
+    return z_ok && yaw_ok;
+  }
+
   if (target.z_cm > 20.0) {
     if (current_idx_ == 0) {
       return z_ok;
@@ -250,6 +259,17 @@ bool RouteTargetPublisherNode::isReached(
 bool RouteTargetPublisherNode::isNearXY(const Target & target, double x_cm, double y_cm) const
 {
   return std::hypot(target.x_cm - x_cm, target.y_cm - y_cm) <= visual_takeover_distance_cm_;
+}
+
+bool RouteTargetPublisherNode::isYawOnlyTransition(std::size_t index) const
+{
+  if (index == 0 || index >= targets_.size()) {
+    return false;
+  }
+
+  const double yaw_delta = std::fabs(
+    normalizeAngleDeg(targets_[index].yaw_deg - targets_[index - 1].yaw_deg));
+  return yaw_delta > 90.0;
 }
 
 void RouteTargetPublisherNode::monitorTimerCallback()
@@ -276,7 +296,8 @@ void RouteTargetPublisherNode::monitorTimerCallback()
     return;
   }
 
-  const Target & target = targets_[current_idx_];
+  Target target = targets_[current_idx_];
+  target.yaw_only = target.yaw_only || isYawOnlyTransition(current_idx_);
   RCLCPP_INFO_THROTTLE(
     get_logger(), *get_clock(), 5000,
     "Current target %zu: x=%.1f y=%.1f z=%.1f yaw=%.1f",
@@ -419,7 +440,7 @@ void RouteTestNode::addTimerCallback()
   route_node_->addTarget(target);
   RCLCPP_INFO(
     get_logger(),
-    "Added route target %zu/%zu: x=%.1f y=%.1f z=%.1f yaw=%.1f qr_laser=%s invert_xy=%s",
+    "Added route target %zu/%zu: x=%.1f y=%.1f z=%.1f yaw=%.1f qr_laser=%s invert_xy=%s yaw_only=%s",
     next_target_index_ + 1,
     route.size(),
     target.x_cm,
@@ -427,7 +448,8 @@ void RouteTestNode::addTimerCallback()
     target.z_cm,
     target.yaw_deg,
     target.require_visual_align ? "true" : "false",
-    target.invert_xy_velocity ? "true" : "false");
+    target.invert_xy_velocity ? "true" : "false",
+    target.yaw_only ? "true" : "false");
   ++next_target_index_;
 }
 

@@ -26,6 +26,7 @@ struct Target
   double yaw_deg;
   bool require_visual_align = false;
   bool invert_xy_velocity = false;
+  bool yaw_only = false;
 };
 
 class RouteTargetPublisherNode : public rclcpp::Node
@@ -44,6 +45,7 @@ private:
   bool getCurrentPose(double & x_cm, double & y_cm, double & z_cm, double & yaw_deg);
   bool isReached(const Target & target, double x_cm, double y_cm, double z_cm, double yaw_deg)
     const;
+  bool isYawOnlyTransition(std::size_t index) const;
   bool isNearXY(const Target & target, double x_cm, double y_cm) const;
 
   void monitorTimerCallback();
