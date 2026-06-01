@@ -112,7 +112,8 @@ void PIDController::setDeadzone(double deadzone)
 }
 /*
   订阅/发布主题：
-    订阅 /target_position (std_msgs::msg::Float32MultiArray)：接收目标位置和朝向，包含四个浮点数 [x_cm, y_cm, z_cm, yaw_deg]。
+    订阅 /target_position (std_msgs::msg::Float32MultiArray)：接收目标位置和朝向，
+    [x_cm, y_cm, z_cm, yaw_deg, invert_xy_velocity(可选)]。
     订阅 /height 
     发布 /target_velocity (std_msgs::msg::Float32MultiArray)
 */
@@ -128,6 +129,7 @@ PositionPIDController::PositionPIDController()
   target_y_cm_(0.0),
   target_z_cm_(0.0),
   target_yaw_deg_(0.0),
+  invert_xy_velocity_(false),
   has_target_position_(false),
   has_target_height_(false),
   current_x_cm_(0.0),
@@ -186,7 +188,9 @@ PositionPIDController::PositionPIDController()
 void PositionPIDController::targetPositionCallback(const std_msgs::msg::Float32MultiArray::SharedPtr msg)
 {
   if (msg->data.size() < 4) {
-    RCLCPP_WARN(get_logger(), "Target position message requires 4 floats [x_cm, y_cm, z_cm, yaw_deg]");
+    RCLCPP_WARN(
+      get_logger(),
+      "Target position message requires at least 4 floats [x_cm, y_cm, z_cm, yaw_deg, invert_xy_velocity(optional)]");
     return;
   }
 
@@ -194,11 +198,16 @@ void PositionPIDController::targetPositionCallback(const std_msgs::msg::Float32M
   target_y_cm_ = static_cast<double>(msg->data[1]);
   target_z_cm_ = static_cast<double>(msg->data[2]);
   target_yaw_deg_ = static_cast<double>(msg->data[3]);
+  invert_xy_velocity_ = msg->data.size() >= 5 && std::fabs(msg->data[4]) > 0.5f;
   has_target_position_ = true;
 
   RCLCPP_INFO(get_logger(),
-    "Received target: x=%.1fcm y=%.1fcm z=%.1fcm yaw=%.1fdeg",
-    target_x_cm_, target_y_cm_, target_z_cm_, target_yaw_deg_);
+    "Received target: x=%.1fcm y=%.1fcm z=%.1fcm yaw=%.1fdeg invert_xy=%s",
+    target_x_cm_,
+    target_y_cm_,
+    target_z_cm_,
+    target_yaw_deg_,
+    invert_xy_velocity_ ? "true" : "false");
 }
 
 void PositionPIDController::heightCallback(const std_msgs::msg::Int16::SharedPtr msg)
@@ -341,23 +350,17 @@ std_msgs::msg::Float32MultiArray PositionPIDController::processPID(double dt)
     }
     vel_z_cm = 0.0;
   }
-  if(target_yaw_deg_ == 0){
+  const bool must_settle_yaw = invert_xy_velocity_ || std::fabs(target_yaw_deg_) > 1.0;
+  if (must_settle_yaw && std::fabs(error_yaw_deg_) > yaw_tolerance_) {
+    vel_x_cm = 0.0;
+    vel_y_cm = 0.0;
+  } else if (invert_xy_velocity_) {
+    vel_x_cm = -vel_x_cm;
+    vel_y_cm = -vel_y_cm;
+  }
+
   cmd.data[0] = static_cast<float>(vel_x_cm);
   cmd.data[1] = static_cast<float>(vel_y_cm);
-  }
-  else
-  {
-    if(error_yaw_deg_ > 6){
-
-    cmd.data[0] = 0.0f;
-    cmd.data[1] = 0.0f;
-    }
-    else
-    {
-    cmd.data[0] = -static_cast<float>(-vel_x_cm);
-    cmd.data[1] = -static_cast<float>(-vel_y_cm);
-    }
-  }
   cmd.data[2] = static_cast<float>(vel_z_cm);
   cmd.data[3] = static_cast<float>(vel_yaw_deg);
   return cmd;

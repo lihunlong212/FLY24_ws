@@ -25,6 +25,7 @@ struct Target
   double z_cm;
   double yaw_deg;
   bool require_visual_align = false;
+  bool invert_xy_velocity = false;
 };
 
 class RouteTargetPublisherNode : public rclcpp::Node

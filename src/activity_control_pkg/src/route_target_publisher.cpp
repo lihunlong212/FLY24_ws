@@ -24,25 +24,25 @@ constexpr double kDefaultTimerPeriodSec = 0.05;
 
 const std::vector<Target> & demoRoute()
 {
-  // {x_cm, y_cm, z_cm, yaw_deg, need_qr_laser}
+  // {x_cm, y_cm, z_cm, yaw_deg, need_qr_laser, invert_xy_velocity}
   static const std::vector<Target> route = {
-    {0.0, 0.0, 130.0, 0.0, false},
-    {0.0, 0.0, 130.0, 0.0, false},
-    {120.0, 0.0, 130.0, 0.0, true},
-    {170.0, 0.0, 130.0, 0.0, true},
-    {230.0, 0.0, 130.0, 0.0, true},
-    {240.0, 0.0, 75.0, 0.0, true},
-    {170.0, 0.0, 83.0, 0.0, true},
-    {120.0, 0.0, 83.0, 0.0, true},
-    {0.0, 0.0, 83.0, 0.0, false},
-    {0.0, -96.0, 87.0, 0.0, false},
-    {170.0, -96.0, 87.0, 0.0, false},
-    {235.0, -96.0, 87.0, 0.0, false},
-    {240.0, -96.0, 130.0, 0.0, false},
-    {170.0, -96.0, 130.0, 0.0, false},
-    {120.0, -96.0, 130.0, 0.0, false},
-    {0.0, -96.0, 130.0, 0.0, false},
-    {0.0, -96.0, 4.0, 0.0, false},
+    {0.0, 0.0, 130.0, 0.0, false, false},
+    {0.0, 0.0, 130.0, 0.0, false, false},
+    {120.0, 0.0, 130.0, 0.0, true, false},
+    {170.0, 0.0, 130.0, 0.0, true, false},
+    {230.0, 0.0, 130.0, 0.0, true, false},
+    {240.0, 0.0, 75.0, 0.0, true, false},
+    {170.0, 0.0, 83.0, 0.0, true, false},
+    {120.0, 0.0, 83.0, 0.0, true, false},
+    {0.0, 0.0, 83.0, 0.0, false, false},
+    {0.0, -96.0, 87.0, 0.0, false, false},
+    {170.0, -96.0, 87.0, 0.0, false, false},
+    {235.0, -96.0, 87.0, 0.0, false, false},
+    {240.0, -96.0, 130.0, 0.0, false, false},
+    {170.0, -96.0, 130.0, 0.0, false, false},
+    {120.0, -96.0, 130.0, 0.0, false, false},
+    {0.0, -96.0, 130.0, 0.0, false, false},
+    {0.0, -96.0, 4.0, 0.0, false, false},
   };
   return route;
 }
@@ -146,6 +146,7 @@ void RouteTargetPublisherNode::publishTarget(const Target & target, bool init_fl
     static_cast<float>(target.y_cm),
     static_cast<float>(target.z_cm),
     static_cast<float>(target.yaw_deg),
+    target.invert_xy_velocity ? 1.0f : 0.0f,
   };
   target_pub_->publish(message);
 
@@ -159,12 +160,13 @@ void RouteTargetPublisherNode::publishTarget(const Target & target, bool init_fl
 
   RCLCPP_INFO(
     get_logger(),
-    "Published target: x=%.1fcm y=%.1fcm z=%.1fcm yaw=%.1fdeg qr_laser=%s%s",
+    "Published target: x=%.1fcm y=%.1fcm z=%.1fcm yaw=%.1fdeg qr_laser=%s invert_xy=%s%s",
     target.x_cm,
     target.y_cm,
     target.z_cm,
     target.yaw_deg,
     target.require_visual_align ? "true" : "false",
+    target.invert_xy_velocity ? "true" : "false",
     init_flag ? " (first)" : "");
 }
 
@@ -236,6 +238,9 @@ bool RouteTargetPublisherNode::isReached(
   if (target.z_cm > 20.0) {
     if (current_idx_ == 0) {
       return z_ok;
+    }
+    if (std::fabs(target.yaw_deg) > 1.0 || target.invert_xy_velocity) {
+      return z_ok && xy_ok && yaw_ok;
     }
     return z_ok && xy_ok;
   }
@@ -413,14 +418,16 @@ void RouteTestNode::addTimerCallback()
   const Target & target = route[next_target_index_];
   route_node_->addTarget(target);
   RCLCPP_INFO(
-    get_logger(), "Added route target %zu/%zu: x=%.1f y=%.1f z=%.1f yaw=%.1f qr_laser=%s",
+    get_logger(),
+    "Added route target %zu/%zu: x=%.1f y=%.1f z=%.1f yaw=%.1f qr_laser=%s invert_xy=%s",
     next_target_index_ + 1,
     route.size(),
     target.x_cm,
     target.y_cm,
     target.z_cm,
     target.yaw_deg,
-    target.require_visual_align ? "true" : "false");
+    target.require_visual_align ? "true" : "false",
+    target.invert_xy_velocity ? "true" : "false");
   ++next_target_index_;
 }
 
