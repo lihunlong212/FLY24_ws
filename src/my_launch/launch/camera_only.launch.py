@@ -18,6 +18,7 @@ def generate_launch_description():
             {"enable_gui": False},
             {"decode_interval": 3},
             {"laser_pin": 10},
+            {"laser_task_active_required": False},
         ],
     )
 

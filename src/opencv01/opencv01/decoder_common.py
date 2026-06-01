@@ -36,6 +36,7 @@ class QRVisionNodeBase(Node):
         self.declare_parameter("enable_gui", False)
         self.declare_parameter("decode_interval", 3)
         self.declare_parameter("laser_pin", -1)
+        self.declare_parameter("laser_task_active_required", False)
 
         self.camera_device = self.get_parameter("camera_device").value
         self.eps_x = float(self.get_parameter("eps_x").value)
@@ -46,6 +47,9 @@ class QRVisionNodeBase(Node):
         self.enable_gui = bool(self.get_parameter("enable_gui").value)
         self.decode_interval = max(1, int(self.get_parameter("decode_interval").value))
         self.laser_pin = int(self.get_parameter("laser_pin").value)
+        self.laser_task_active_required = bool(
+            self.get_parameter("laser_task_active_required").value
+        )
 
         prefix = topic_prefix.strip().rstrip("/")
         self.topic_prefix = prefix if prefix.startswith("/") else "/" + prefix
@@ -54,8 +58,12 @@ class QRVisionNodeBase(Node):
         self.offset_pub = self.create_publisher(Point, f"{self.topic_prefix}/offset_norm", 10)
         self.aligned_pub = self.create_publisher(Bool, f"{self.topic_prefix}/aligned", 10)
         self.image_pub = self.create_publisher(Image, f"{self.topic_prefix}/debug_image", 10)
+        self.qr_task_active_sub = self.create_subscription(
+            Bool, "/qr_task_active", self._qr_task_active_callback, 10
+        )
 
         self.camera_active = True
+        self.qr_task_active = not self.laser_task_active_required
 
         self.bridge = CvBridge()
         self.cap = cv2.VideoCapture(self.camera_device)
@@ -102,6 +110,9 @@ class QRVisionNodeBase(Node):
             wiringpi.digitalWrite(self.laser_pin, GPIO.HIGH)
         except Exception as exc:
             self.get_logger().error(f"Laser pulse failed: {exc}")
+
+    def _qr_task_active_callback(self, msg: Bool) -> None:
+        self.qr_task_active = bool(msg.data)
 
     def _update_window_status(self) -> None:
         self.should_show_window = self.enable_gui and os.environ.get("DISPLAY") is not None
@@ -156,7 +167,7 @@ class QRVisionNodeBase(Node):
 
             aligned = self.stable_count >= self.stable_frames
             laser_ready = abs(ex) < self.eps_x_laser
-            if laser_ready and qr_data != self.previous_qr_data:
+            if self.qr_task_active and laser_ready and qr_data != self.previous_qr_data:
                 threading.Thread(target=self._fire_laser_worker, daemon=True).start()
                 self.previous_qr_data = qr_data
 

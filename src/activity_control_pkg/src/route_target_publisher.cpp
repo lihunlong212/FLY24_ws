@@ -22,36 +22,27 @@ namespace
 {
 constexpr double kDefaultTimerPeriodSec = 0.05;
 
-Target visualTarget(double x_cm, double y_cm, double z_cm, double yaw_deg = 0.0)
-{
-  return Target{x_cm, y_cm, z_cm, yaw_deg, true};
-}
-
-Target waypoint(double x_cm, double y_cm, double z_cm, double yaw_deg = 0.0)
-{
-  return Target{x_cm, y_cm, z_cm, yaw_deg, false};
-}
-
 const std::vector<Target> & demoRoute()
 {
+  // {x_cm, y_cm, z_cm, yaw_deg, need_qr_laser}
   static const std::vector<Target> route = {
-    waypoint(0.0, 0.0, 130.0),
-    waypoint(0.0, 0.0, 130.0),
-    visualTarget(120.0, 0.0, 130.0),
-    visualTarget(170.0, 0.0, 130.0),
-    visualTarget(230.0, 0.0, 130.0),
-    visualTarget(240.0, 0.0, 75.0),
-    visualTarget(170.0, 0.0, 83.0),
-    visualTarget(120.0, 0.0, 83.0),
-    waypoint(0.0, 0.0, 83.0),
-    waypoint(0.0, -96.0, 87.0),
-    waypoint(170.0, -96.0, 87.0),
-    waypoint(235.0, -96.0, 87.0),
-    waypoint(240.0, -96.0, 130.0),
-    waypoint(170.0, -96.0, 130.0),
-    waypoint(120.0, -96.0, 130.0),
-    waypoint(0.0, -96.0, 130.0),
-    waypoint(0.0, -96.0, 4.0),
+    {0.0, 0.0, 130.0, 0.0, false},
+    {0.0, 0.0, 130.0, 0.0, false},
+    {120.0, 0.0, 130.0, 0.0, true},
+    {170.0, 0.0, 130.0, 0.0, true},
+    {230.0, 0.0, 130.0, 0.0, true},
+    {240.0, 0.0, 75.0, 0.0, true},
+    {170.0, 0.0, 83.0, 0.0, true},
+    {120.0, 0.0, 83.0, 0.0, true},
+    {0.0, 0.0, 83.0, 0.0, false},
+    {0.0, -96.0, 87.0, 0.0, false},
+    {170.0, -96.0, 87.0, 0.0, false},
+    {235.0, -96.0, 87.0, 0.0, false},
+    {240.0, -96.0, 130.0, 0.0, false},
+    {170.0, -96.0, 130.0, 0.0, false},
+    {120.0, -96.0, 130.0, 0.0, false},
+    {0.0, -96.0, 130.0, 0.0, false},
+    {0.0, -96.0, 4.0, 0.0, false},
   };
   return route;
 }
@@ -84,6 +75,7 @@ RouteTargetPublisherNode::RouteTargetPublisherNode(const rclcpp::NodeOptions & o
   auto qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
   target_pub_ = create_publisher<std_msgs::msg::Float32MultiArray>(output_topic_, qos);
   active_controller_pub_ = create_publisher<std_msgs::msg::UInt8>("/active_controller", qos);
+  qr_task_active_pub_ = create_publisher<std_msgs::msg::Bool>("/qr_task_active", qos);
 
   height_sub_ = create_subscription<std_msgs::msg::Int16>(
     "/height", rclcpp::QoS(10),
@@ -161,9 +153,13 @@ void RouteTargetPublisherNode::publishTarget(const Target & target, bool init_fl
   active_msg.data = 2;
   active_controller_pub_->publish(active_msg);
 
+  std_msgs::msg::Bool qr_task_active_msg;
+  qr_task_active_msg.data = target.require_visual_align;
+  qr_task_active_pub_->publish(qr_task_active_msg);
+
   RCLCPP_INFO(
     get_logger(),
-    "Published target: x=%.1fcm y=%.1fcm z=%.1fcm yaw=%.1fdeg visual=%s%s",
+    "Published target: x=%.1fcm y=%.1fcm z=%.1fcm yaw=%.1fdeg qr_laser=%s%s",
     target.x_cm,
     target.y_cm,
     target.z_cm,
@@ -417,7 +413,7 @@ void RouteTestNode::addTimerCallback()
   const Target & target = route[next_target_index_];
   route_node_->addTarget(target);
   RCLCPP_INFO(
-    get_logger(), "Added route target %zu/%zu: x=%.1f y=%.1f z=%.1f yaw=%.1f visual=%s",
+    get_logger(), "Added route target %zu/%zu: x=%.1f y=%.1f z=%.1f yaw=%.1f qr_laser=%s",
     next_target_index_ + 1,
     route.size(),
     target.x_cm,

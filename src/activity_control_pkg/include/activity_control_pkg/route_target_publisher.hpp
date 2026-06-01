@@ -56,6 +56,7 @@ private:
 
   rclcpp::Publisher<std_msgs::msg::Float32MultiArray>::SharedPtr target_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr active_controller_pub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr qr_task_active_pub_;
   rclcpp::Subscription<std_msgs::msg::Int16>::SharedPtr height_sub_;
   rclcpp::Subscription<std_msgs::msg::Bool>::SharedPtr qr_aligned_sub_;
   rclcpp::Subscription<geometry_msgs::msg::Point>::SharedPtr qr_fine_offset_sub_;

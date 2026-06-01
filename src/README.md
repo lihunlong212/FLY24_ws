@@ -58,7 +58,7 @@ source install/setup.bash
 关键文件：
 
 - `activity_control_pkg/include/activity_control_pkg/route_target_publisher.hpp`：定义 `Target` 结构体（坐标、高度、航向、是否需要视觉对准），以及两个节点类的接口与关键状态变量。
-- `activity_control_pkg/src/route_target_publisher.cpp`：核心逻辑文件，维护目标点队列 `targets_`，通过 TF 查询 `map -> laser_link` 获取当前位姿（高度来自 `/height`），发布 `/target_position`、`/active_controller`（固定为 2，表示 Drone/飞控），并在接近视觉目标时根据 `/qr/aligned` 与 `/qr/fine_offset_body_cm` 动态发布“微调后的目标点”，对准成功后立即切换到下一个目标。
+- `activity_control_pkg/src/route_target_publisher.cpp`：核心逻辑文件，维护目标点队列 `targets_`，通过 TF 查询 `map -> laser_link` 获取当前位姿（高度来自 `/height`），发布 `/target_position`、`/active_controller`（固定为 2，表示 Drone/飞控）和 `/qr_task_active`，并在接近视觉目标时根据 `/qr/aligned` 与 `/qr/fine_offset_body_cm` 动态发布“微调后的目标点”，对准成功后立即切换到下一个目标。
 - `activity_control_pkg/src/route_target_publisher_main.cpp`：`route_target_publisher_node` 的标准入口（初始化并 spin）。
 - `activity_control_pkg/src/route_test_node.cpp`：测试/演示入口，使用 `MultiThreadedExecutor` 同时运行目标发布节点与测试节点，并自动按数组顺序添加一系列目标点（部分目标点要求视觉对准）。
 
