@@ -27,30 +27,53 @@ constexpr double kDefaultTimerPeriodSec = 0.05;
 const std::vector<Target> & demoRoute()
 {
   // {x_cm, y_cm, z_cm, yaw_deg, need_qr_laser, invert_xy_velocity, yaw_only}
-  // yaw_only can be set manually; 0 <-> 180 deg transitions are detected automatically.
   static const std::vector<Target> route = {
-    {0.0, 0.0, 130.0, 0.0, false, false, false},
-    {100.0, 0.0, 130.0, 0.0, false, false, false},
-    {100.0, 0.0, 130.0, 180.0, false, false, true},
-    {100.0, -100.0, 130.0, 180.0, false, true, false},
-    {0.0, -100.0, 130.0, 180.0, false, true, false},
-    {0.0, 0.0, 130.0, 180.0, false, true, false},
-    {0.0, 0.0, 0.0, 180.0, false, true, false},
+    {0.0, 0.0, 128.0, 0.0, false, false, false},
+//第一面
+    {175.0, -40.0, 128.0, 0.0, true, false, false},
+    {125.0, -40.0, 128.0, 0.0, true, false, false},
+    {75.0, -40.0, 128.0, 0.0, true, false, false},
 
-    // {170.0, 0.0, 130.0, 0.0, true, false, false},
-    // {230.0, 0.0, 130.0, 0.0, true, false, false},
-    // {240.0, 0.0, 75.0, 0.0, true, false, false},
-    // {170.0, 0.0, 83.0, 0.0, true, false, false},
-    // {120.0, 0.0, 83.0, 0.0, true, false, false},
-    // {0.0, 0.0, 83.0, 0.0, false, false, false},
-    // {0.0, -96.0, 87.0, 0.0, false, false, false},
-    // {170.0, -96.0, 87.0, 0.0, false, false, false},
-    // {235.0, -96.0, 87.0, 0.0, false, false, false},
-    // {240.0, -96.0, 130.0, 0.0, false, false, false},
-    // {170.0, -96.0, 130.0, 0.0, false, false, false},
-    // {120.0, -96.0, 130.0, 0.0, false, false, false},
-    // {0.0, -96.0, 130.0, 0.0, false, false, false},
-    // {0.0, -96.0, 4.0, 0.0, false, false, false},
+    {175.0, -40.0, 83.0, 0.0, true, false, false},
+    {125.0, -40.0, 83.0, 0.0, true, false, false},
+    {75.0, -40.0, 83.0, 0.0, true, false, false},
+//转向
+    {-10.0, -40.0, 83.0, 0.0, false, false, false},
+    {-10.0, -40.0, 83.0, 180.0, false, false, true},
+    {-10.0, -110.0, 83.0, 180.0, false, true, false},
+//第二面
+    {75.0, -110.0, 128.0, 180.0, true, true, false},
+    {125.0, -110.0, 128.0, 180.0, true, true, false},
+    {175.0, -110.0, 128.0, 180.0, true, true, false},
+
+    {75.0, -110.0, 83.0, 180.0, true, true, false},
+    {125.0, -110.0, 83.0, 180.0, true, true, false},
+    {175.0, -110.0, 83.0, 180.0, true, true, false},
+//转向
+    {175.0, -110.0, 83.0, 0.0, false,false,true},
+//第三面
+    {175.0, -245.0, 128.0, 0.0, true,false,false},
+    {125.0, -245.0, 128.0, 0.0, true,false,false},
+    {75.0, -245.0, 128.0, 0.0, true,false,false},
+
+    {175.0, -245.0, 83.0, 0.0, true,false,false},
+    {125.0, -245.0, 83.0, 0.0, true,false,false},
+    {75.0, -245.0, 83.0, 0.0, true,false,false},
+//转向
+    {-10.0, -245.0, 83.0, 0.0, false, false, false},
+    {-10.0, -245.0, 83.0, 180.0, false, false, true},
+    {-10.0, -305.0, 83.0, 180.0, false, true, false},
+//第四面
+    {75.0, -305.0, 128.0, 180.0, true, true, false},
+    {125.0, -305.0, 128.0, 180.0, true, true, false},
+    {175.0, -305.0, 128.0, 180.0, true, true, false},
+
+    {175.0, -305.0, 83.0, 180.0, true, true, false},
+    {125.0, -305.0, 83.0, 180.0, true, true, false},
+    {75.0, -305.0, 83.0, 180.0, true, true, false},
+//结束
+    {250.0, -350.0, 83.0, 180.0, false, true, false},
+    {250.0, -350.0, 0.0, 180.0, false, true, false},
   };
   return route;
 }
