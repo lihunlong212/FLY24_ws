@@ -63,6 +63,9 @@ install(DIRECTORY launch
   DESTINATION share/${PROJECT_NAME}
   FILES_MATCHING PATTERN "*.launch.py")
 
+install(DIRECTORY config
+  DESTINATION share/${PROJECT_NAME})
+
 ament_export_dependencies(
   rclcpp
   std_msgs

@@ -25,23 +25,34 @@ def generate_launch_description():
         )
     )
 
-    route_test_node = Node(
+    route_target_publisher = Node(
         package="activity_control_pkg",
-        executable="route_test_node",
-        name="route_test_node",
+        executable="route_target_publisher_node",
+        name="route_target_publisher",
         output="screen",
         arguments=[
             "--ros-args",
-            "-p",
-            "enable_visual_takeover:=true",
-            "-p",
-            "visual_takeover_distance_cm:=10.0",
             "-p",
             "fine_offset_limit_cm:=15.0",
             "-p",
             "fine_target_publish_hz:=10.0",
             "-p",
             "laser_fire_duration_sec:=1.0",
+            "-p",
+            "target_start_delay_sec:=5.0",
+            "-p",
+            "inventory_file_path:=src/activity_control_pkg/config/qr_inventory.csv",
+        ],
+    )
+
+    bluetooth_node = Node(
+        package="bluetooth",
+        executable="bluetooth_node",
+        name="bluetooth_node",
+        output="screen",
+        parameters=[
+            {"port": "/dev/ttyS3"},
+            {"baudrate": 9600},
         ],
     )
 
@@ -93,6 +104,7 @@ def generate_launch_description():
         fly_carto_launch,
         uart_to_stm32_launch,
         position_pid_controller_launch,
-        route_test_node,
+        route_target_publisher,
+        bluetooth_node,
         TimerAction(period=1.0, actions=[qr_decoder, qr_fine_tune]),
     ])

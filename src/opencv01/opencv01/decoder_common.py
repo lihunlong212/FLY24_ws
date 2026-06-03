@@ -2,9 +2,6 @@
 from __future__ import annotations
 
 import os
-import threading
-import time
-
 import cv2
 import rclpy
 import wiringpi
@@ -80,7 +77,6 @@ class QRVisionNodeBase(Node):
         self.frame_count = 0
         self.previous_qr_data = ""
         self.laser_is_on = False
-        self.laser_busy = False
         self.gpio_initialized = False
         self.should_show_window = False
 
@@ -116,26 +112,11 @@ class QRVisionNodeBase(Node):
         except Exception as exc:
             self.get_logger().error(f"Laser write failed: {exc}")
 
-    def _fire_laser_worker(self) -> None:
-        if self.laser_pin == -1:
-            return
-        self.laser_busy = True
-        self.get_logger().info(
-            f"Laser firing on pin {self.laser_pin} for {self.laser_duration_sec:.2f}s."
-        )
-        self._set_laser(True)
-        time.sleep(max(0.0, self.laser_duration_sec))
-        self._set_laser(False)
-        self.laser_busy = False
-
     def _laser_fire_callback(self, msg: Bool) -> None:
-        if not bool(msg.data):
+        if not bool(msg.data) or not self.qr_task_active:
             self._set_laser(False)
-            self.laser_busy = False
             return
-        if self.qr_task_active and not self.laser_busy:
-            self.laser_busy = True
-            threading.Thread(target=self._fire_laser_worker, daemon=True).start()
+        self._set_laser(True)
 
     def _qr_task_active_callback(self, msg: Bool) -> None:
         self.qr_task_active = bool(msg.data)

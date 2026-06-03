@@ -3,6 +3,7 @@
   
 #include <chrono>
 #include <cmath>
+#include <thread>
 #include <utility>
 
 #include <tf2/exceptions.h>
@@ -19,7 +20,8 @@ UartToStm32::UartToStm32(rclcpp::Node::SharedPtr node)
   current_yaw_(0.0),
   yaw_valid_(false),
   velocity_valid_(false),   
-  has_st_ready_pub_(false)
+  has_st_ready_pub_(false),
+  has_mission_mode_(false)
 {
   RCLCPP_INFO(node_->get_logger(), "UartToStm32 created");
 }
@@ -82,8 +84,11 @@ bool UartToStm32::initialize(double update_rate, const std::string & source_fram
     height_pub_ = node_->create_publisher<std_msgs::msg::Int16>("/height", 10);
     is_st_ready_pub_ = node_->create_publisher<std_msgs::msg::UInt8>("/is_st_ready", rclcpp::QoS(10).transient_local());
     mission_step_pub_ = node_->create_publisher<std_msgs::msg::UInt8>("/mission_step", 10);
+    mission_mode_pub_ = node_->create_publisher<std_msgs::msg::UInt8>(
+      "/mission_mode", rclcpp::QoS(1).transient_local().reliable());
 
     has_st_ready_pub_ = false;
+    has_mission_mode_ = false;
 
     serial_comm_->start_protocol_receive(
       [this](uint8_t id, const std::vector<uint8_t> & data) { protocolDataHandler(id, data); },
@@ -306,6 +311,14 @@ void UartToStm32::sendTargetVelocityToSerial(float vx_cm_per_s, float vy_cm_per_
 void UartToStm32::protocolDataHandler(uint8_t id, const std::vector<uint8_t> & data)
 {
   switch (id) {
+    case MISSION_MODE_FRAME_ID: {
+      if (data.empty()) {
+        RCLCPP_WARN(node_->get_logger(), "Mission mode frame data empty");
+        break;
+      }
+      publishMissionMode(data[0]);
+      break;
+    }
     case ST_READY_QUERY_ID: {
       if (data.size() < 9) {
         RCLCPP_WARN(node_->get_logger(), "protocolDataHandler: ID 0xF1 data too short, len=%zu", data.size());
@@ -379,6 +392,33 @@ void UartToStm32::protocolDataHandler(uint8_t id, const std::vector<uint8_t> & d
         "Unhandled protocol ID: 0x%02X, len=%zu", id, data.size());
       break;
     }
+  }
+}
+
+void UartToStm32::publishMissionMode(uint8_t mode)
+{
+  if (has_mission_mode_) {
+    RCLCPP_INFO_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 2000,
+      "Mission mode already latched, ignoring %u.", static_cast<unsigned int>(mode));
+    return;
+  }
+
+  if (mode != 1 && mode != 2) {
+    RCLCPP_DEBUG_THROTTLE(
+      node_->get_logger(), *node_->get_clock(), 5000,
+      "Ignoring mission mode %u; waiting for 1 or 2.", static_cast<unsigned int>(mode));
+    return;
+  }
+
+  if (mission_mode_pub_) {
+    std_msgs::msg::UInt8 msg;
+    msg.data = mode;
+    mission_mode_pub_->publish(msg);
+    has_mission_mode_ = true;
+    RCLCPP_INFO(
+      node_->get_logger(), "Published /mission_mode=%u and latched it.",
+      static_cast<unsigned int>(mode));
   }
 }
 

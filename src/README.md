@@ -42,7 +42,7 @@ source install/setup.bash
 - 视觉辅助：`opencv01` 使用单摄像头 `/dev/video0`，发布 `/qr/*` 话题，提供“是否对准”和“微调偏移量”。
 - 速度生成：`pid_control_pkg` 订阅 `/target_position`，发布 `/target_velocity`（速度指令）。
 - 串口桥接：`uart_to_stm32` 将速度与状态通过串口协议与 STM32/飞控交互，并发布 `/height`、`/is_st_ready`、`/mission_step`。
-- OpenMV -> 蓝牙链路：`openmv_bridge` 发布 `/openmv_data`，`bluetooth` 处理后发布 `/bluetooth_data` 并回传预测位置。
+- 地面站蓝牙链路：`activity_control_pkg` 发布二维码盘点/目标事件，`bluetooth` 通过 `/dev/ttyS3` 转发给地面站显示。
 - 车体驱动：`pid_controller`（车体 PID）发布 `/wheel_speeds`，`car_driver` 下发到电机驱动板。
 
 ## 功能包与文件逻辑说明
@@ -58,7 +58,7 @@ source install/setup.bash
 关键文件：
 
 - `activity_control_pkg/include/activity_control_pkg/route_target_publisher.hpp`：定义 `Target` 结构体（坐标、高度、航向、是否需要视觉打激光、是否反向 XY 速度），以及两个节点类的接口与关键状态变量。
-- `activity_control_pkg/src/route_target_publisher.cpp`：核心逻辑文件，维护目标点队列 `targets_`，通过 TF 查询 `map -> laser_link` 获取当前位姿（高度来自 `/height`），发布 `/target_position`、`/active_controller`（固定为 2，表示 Drone/飞控）和二维码任务门控；普通航点到达后直接切换，二维码航点到达后才启动识别、记录、视觉微调、激光点亮 1 秒，然后切换到下一个目标。
+- `activity_control_pkg/src/route_target_publisher.cpp`：核心逻辑文件，等待 `/mission_mode` 后启动任务；`1` 为第一次盘点，按 A1-A6、B1-B6、C1-C6、D1-D6 飞行并写 `config/qr_inventory.csv`；`2` 为第二次目标飞行，起飞前识别手持二维码，查 CSV 得到货位，通知地面站后等待 5 秒再起飞。节点通过 TF 查询 `map -> laser_link` 获取当前位姿（高度来自 `/height`），发布 `/target_position`、`/active_controller`、`/qr_task_active`、`/qr/fire_laser`、`/qr/inventory_event` 和 `/qr/target_event`。
 - `activity_control_pkg/src/route_target_publisher_main.cpp`：`route_target_publisher_node` 的标准入口（初始化并 spin）。
 - `activity_control_pkg/src/route_test_node.cpp`：测试/演示入口，使用 `MultiThreadedExecutor` 同时运行目标发布节点与测试节点，并自动按数组顺序添加一系列目标点（部分目标点要求视觉对准）。
 
@@ -87,13 +87,13 @@ Launch：
 
 ---
 
-## `bluetooth`（蓝牙串口读写与目标预测回传）
+## `bluetooth`（地面站蓝牙串口发送）
 
-用途概述：从蓝牙串口读取简单帧并发布；同时订阅 OpenMV 识别结果，在 TF 下估计短时未来位置后回传给下位机。
+用途概述：把二维码盘点和第二次目标飞行显示事件通过蓝牙串口发给地面站。
 
 关键文件：
 
-- `bluetooth/src/bluetooth.cpp`：唯一核心文件，负责打开串口并用 10ms 定时器轮询读取，解析格式为 `[0xAA][data][checksum]` 的简易帧并发布 `/bluetooth_data`，订阅 `/openmv_data` 后要求同一动物类型连续出现 3 次才触发发送，随后通过 TF 估计 `map -> base_link` 的速度并对 0.5s 内位置做多点平均预测，最后将“动物类型 + 预测位置(cm)”打包为自定义帧回写串口。
+- `bluetooth/src/bluetooth.cpp`：负责打开地面站蓝牙串口 `/dev/ttyS3`，订阅 `/qr/inventory_event` 后发送盘点帧 `[0xAA, slot_code, qr_value, 0xFF]`，订阅 `/qr/target_event` 后发送第二次目标显示帧 `[0xAA, slot_code, qr_value, 0xFF, 0xFF]`。
 
 Launch：无。
 
@@ -185,7 +185,7 @@ Launch：无。
 
 - `pid_control_pkg/include/pid_control_pkg/pid_controller.hpp`：定义 PID 控制器与位置控制节点的结构、状态与参数。
 - `pid_control_pkg/src/pid_controller.cpp`：核心控制逻辑，订阅 `/target_position`（6 元组：x_cm, y_cm, z_cm, yaw_deg, invert_xy_velocity, yaw_only），通过 TF 获取 `map -> laser_link` 的当前 XY 与 yaw（高度来自 `/height`），XY 方向采用“距离 -> 速度”的策略再按方向分解成 vx/vy；当 `invert_xy_velocity` 为 true 时，先等 yaw 到位，再将 vx/vy 取反输出；当 `yaw_only` 为 true 时，完全跳过 XY PID，只输出 0 的 vx/vy，并且只用 yaw 与高度判断该航点是否到达。`activity_control_pkg` 会自动把 yaw 从 0 到 180 或从 180 到 0 的航点标记为 `yaw_only`，也可以在数组里手动把最后一项设为 true。yaw 与 z 分别用独立 PID 控制，发布 `/target_velocity`（4 元组：vx_cm/s, vy_cm/s, vz_cm/s, vyaw_deg/s），并在目标高度非 0 但尚未收到高度数据时抑制 z 速度并打印节流警告。
-- 二维码盘点流程：航点数组中 `need_qr_laser=true` 的点会在到达后才启动 `/qr_task_active`，按 A1-A6、B1-B6、C1-C6、D1-D6 的顺序把 `/qr/id` 转成 `uint8_t` 并发布到 `/qr/inventory_data`；记录完成后用 `/qr/fine_offset_body_cm` 做视觉对准，`/qr/aligned=true` 后通过 `/qr/fire_laser` 控制 pin10 激光点亮 1 秒，再进入下一个航点。
+- 二维码流程：盘点航点到达后才启动 `/qr_task_active`，先视觉对准再读取 `/qr/id`，按 A1-A6、B1-B6、C1-C6、D1-D6 写入 `qr_inventory.csv`，并在激光点亮期间发布 `/qr/inventory_event`；第二次飞行起飞前识别手持二维码，查 CSV 后发布 `/qr/target_event` 给地面站显示，等待 5 秒后飞往匹配货位并对准打激光。
 - `pid_control_pkg/launch/position_pid_controller.launch.py`：标准启动入口与参数模板。
 
 Launch：
@@ -228,7 +228,7 @@ Launch：无（这是库，不是节点）。
 关键文件：
 
 - `uart_to_stm32/src/uart_to_stm32_node.cpp`：节点入口，声明并读取 `update_rate/source_frame/target_frame` 参数，创建 `UartToStm32` 实例并初始化。
-- `uart_to_stm32/src/uart_to_stm32.cpp`：桥接主逻辑，使用 `serial_comm` 打开 `/dev/ttyS6`（921600），订阅 `/velocity_map` 与 `/target_velocity`，通过 TF 获取 yaw 并把速度从全局系旋转到机体系后再发送，解析下位机协议帧（`0xF1` 发布 `/mission_step` 且在满足条件时发布一次 `/is_st_ready=1`，`0x05` 发布 `/height`），并在收到 `/active_controller == 2`（Drone 模式）时连续发送 3 次 A2 ready 响应帧。
+- `uart_to_stm32/src/uart_to_stm32.cpp`：桥接主逻辑，使用 `serial_comm` 打开 `/dev/ttyS6`（921600），订阅 `/velocity_map` 与 `/target_velocity`，通过 TF 获取 yaw 并把速度从全局系旋转到机体系后再发送，解析下位机协议帧（`0x01` 取 `data[0]` 发布并锁存 `/mission_mode`，`0xF1` 发布 `/mission_step` 且在满足条件时发布一次 `/is_st_ready=1`，`0x05` 发布 `/height`），并在收到 `/active_controller == 2`（Drone 模式）时连续发送 3 次 A2 ready 响应帧。
 - `uart_to_stm32/launch/uart_to_stm32.launch.py`：标准启动入口。
 - `uart_to_stm32/launch/total.launch.py`：一键组合启动（会包含雷达、Cartographer、串口桥、PID 控制）。
 

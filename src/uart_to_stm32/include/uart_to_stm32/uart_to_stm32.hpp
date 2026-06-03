@@ -41,6 +41,7 @@ private:
   void sendA2ReadyResponse();
   void activeControllerCallback(const std_msgs::msg::UInt8::SharedPtr msg);
   void protocolDataHandler(uint8_t id, const std::vector<uint8_t> & data);
+  void publishMissionMode(uint8_t mode);
 
   rclcpp::Node::SharedPtr node_;
   std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
@@ -60,6 +61,7 @@ private:
   rclcpp::Publisher<std_msgs::msg::Int16>::SharedPtr height_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr is_st_ready_pub_;
   rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr mission_step_pub_;
+  rclcpp::Publisher<std_msgs::msg::UInt8>::SharedPtr mission_mode_pub_;
 
   void bluetoothCallback(const std_msgs::msg::UInt8MultiArray::SharedPtr msg);
   double current_yaw_;
@@ -67,9 +69,11 @@ private:
   geometry_msgs::msg::Twist current_velocity_;
   bool velocity_valid_;
   bool has_st_ready_pub_;
+  bool has_mission_mode_;
 
   static constexpr uint8_t VELOCITY_FRAME_ID = 0x32;
   static constexpr uint8_t TARGET_VELOCITY_FRAME_ID = 0x31;
+  static constexpr uint8_t MISSION_MODE_FRAME_ID = 0x01;
   static constexpr uint8_t ST_READY_QUERY_ID = 0xF1;
   static constexpr uint8_t A2_READY_RESP_ID = 0xA2;
 };
