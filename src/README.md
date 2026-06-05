@@ -131,21 +131,15 @@ Launch：
 
 ## `my_launch`（演示/总控 launch 集合）
 
-用途概述：用几个“场景化 launch 文件”把系统按不同需求拼起来。
+用途概述：比赛起飞总入口，统一启动飞行、串口、任务状态机、蓝牙、二维码识别与视觉微调链路。
 
 关键文件（全部是 launch）：
 
-- `my_launch/launch/camera_only.launch.py`：只启动左右相机二维码识别与微调节点。
-- `my_launch/launch/demo2.launch.py`：启动建图（`fly_carto`）+ 串口桥（`uart_to_stm32`）。
-- `my_launch/launch/demo1.launch.py`：在 demo2 的基础上再启动 PID 控制与路线测试（部分车体/蓝牙节点已注释）。
-- `my_launch/launch/demo3.launch.py`：更完整的任务流，启动建图、串口桥、位置 PID、路线测试节点（并通过参数开启视觉接管），再延时 1 秒启动左右相机识别与微调节点以减少 TF/串口初始化竞争。
+- `my_launch/launch/demo1.launch.py`：比赛起飞入口，启动建图（`fly_carto`）、STM32 串口桥、位置 PID、任务航点状态机、蓝牙地面站回传、单摄像头二维码识别与视觉微调。二维码识别延时 1 秒启动，减少 TF/串口初始化竞争。
 
 Launch：
 
-- `my_launch/launch/camera_only.launch.py`
 - `my_launch/launch/demo1.launch.py`
-- `my_launch/launch/demo2.launch.py`
-- `my_launch/launch/demo3.launch.py`
 
 ---
 
@@ -242,17 +236,14 @@ Launch：
 ## 常用启动命令（建议从这里开始）
 
 ```bash
-# 仅视觉识别链路
-ros2 launch my_launch camera_only.launch.py
-
 # 位置 PID 控制
 ros2 launch pid_control_pkg position_pid_controller.launch.py
 
 # 串口桥（高度/任务状态/速度下发）
 ros2 launch uart_to_stm32 uart_to_stm32.launch.py
 
-# 组合演示（更完整的链路）
-ros2 launch my_launch demo3.launch.py
+# 比赛起飞完整链路
+ros2 launch my_launch demo1.launch.py
 ```
 
 ## 公开发布前的建议检查项
