@@ -6,13 +6,14 @@
 
 - 脚本位置：`LASER_PIN_TEST.py`（仓库根目录）
 - 本项目只有一个激光，默认引脚：`wPi 10`
+- 激光控制使用 Orange Pi/WiringOP 的系统命令 `gpio`，先用 `gpio readall` 确认命令可用。
 - 常用命令：
 
 ```bash
-sudo python3 LASER_PIN_TEST.py on
-sudo python3 LASER_PIN_TEST.py off
-sudo python3 LASER_PIN_TEST.py pulse
-sudo python3 LASER_PIN_TEST.py blink --times 5 --interval 0.3
+python3 LASER_PIN_TEST.py on
+python3 LASER_PIN_TEST.py off
+python3 LASER_PIN_TEST.py pulse
+python3 LASER_PIN_TEST.py blink --times 5 --interval 0.3
 ```
 
 ## 快速开始

@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import time
 import cv2
 import rclpy
@@ -12,9 +14,6 @@ from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
-
-wiringpi = None
-GPIO = None
 
 
 class QRVisionNodeBase(Node):
@@ -39,6 +38,7 @@ class QRVisionNodeBase(Node):
         self.declare_parameter("laser_task_active_required", False)
         self.declare_parameter("laser_duration_sec", 1.0)
         self.declare_parameter("standalone_laser_once", True)
+        self.declare_parameter("gpio_command", "gpio")
 
         self.camera_device = self.get_parameter("camera_device").value
         self.eps_x = float(self.get_parameter("eps_x").value)
@@ -56,6 +56,7 @@ class QRVisionNodeBase(Node):
         )
         self.laser_duration_sec = float(self.get_parameter("laser_duration_sec").value)
         self.standalone_laser_once = bool(self.get_parameter("standalone_laser_once").value)
+        self.gpio_command = str(self.get_parameter("gpio_command").value)
 
         prefix = topic_prefix.strip().rstrip("/")
         self.topic_prefix = prefix if prefix.startswith("/") else "/" + prefix
@@ -103,50 +104,49 @@ class QRVisionNodeBase(Node):
         if self.gpio_initialized or self.laser_pin == -1:
             return
 
-        global wiringpi, GPIO
-        if wiringpi is None or GPIO is None:
-            try:
-                import wiringpi as wiringpi_module
-                from wiringpi import GPIO as gpio_module
-
-                wiringpi = wiringpi_module
-                GPIO = gpio_module
-            except ImportError:
-                self.get_logger().warn("wiringpi is not installed; laser disabled.")
-                self.laser_pin = -1
-                return
-            except BaseException as exc:
-                self.get_logger().warn(f"wiringpi import failed; laser disabled: {exc}")
-                self.laser_pin = -1
-                return
-
-        if wiringpi is None or GPIO is None:
-            self.get_logger().warn("wiringpi is not installed; laser disabled.")
+        if not self._gpio_command_available():
+            self.get_logger().warn(
+                f"GPIO command '{self.gpio_command}' not found; laser disabled."
+            )
             self.laser_pin = -1
             return
 
-        try:
-            setup_result = wiringpi.wiringPiSetup()
-        except BaseException as exc:
-            self.get_logger().warn(f"GPIO setup failed; laser disabled: {exc}")
+        if not self._run_gpio(["mode", str(self.laser_pin), "out"]):
             self.laser_pin = -1
             return
-
-        if setup_result == -1:
-            self.get_logger().error("GPIO setup failed; laser disabled.")
-            self.laser_pin = -1
-            return
-
-        try:
-            wiringpi.pinMode(self.laser_pin, GPIO.OUTPUT)
-            wiringpi.digitalWrite(self.laser_pin, GPIO.HIGH)
-        except Exception as exc:
-            self.get_logger().error(f"GPIO init write failed; laser disabled: {exc}")
+        if not self._run_gpio(["write", str(self.laser_pin), "1"]):
             self.laser_pin = -1
             return
 
         self.gpio_initialized = True
         self.get_logger().info(f"GPIO {self.laser_pin} initialized for laser output.")
+
+    def _gpio_command_available(self) -> bool:
+        if os.path.isabs(self.gpio_command) or os.sep in self.gpio_command:
+            return os.path.exists(self.gpio_command)
+        return shutil.which(self.gpio_command) is not None
+
+    def _run_gpio(self, args) -> bool:
+        try:
+            result = subprocess.run(
+                [self.gpio_command, *args],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=1.0,
+                check=False,
+            )
+        except Exception as exc:
+            self.get_logger().warn(f"GPIO command failed; laser disabled: {exc}")
+            return False
+
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "").strip()
+            self.get_logger().warn(
+                f"GPIO command returned {result.returncode}; laser disabled: {detail}"
+            )
+            return False
+        return True
 
     def _set_laser(self, enabled: bool) -> None:
         if self.laser_pin == -1:
@@ -155,11 +155,12 @@ class QRVisionNodeBase(Node):
             self._init_gpio()
         if not self.gpio_initialized:
             return
-        try:
-            wiringpi.digitalWrite(self.laser_pin, GPIO.LOW if enabled else GPIO.HIGH)
+        if self._run_gpio(["write", str(self.laser_pin), "0" if enabled else "1"]):
             self.laser_is_on = enabled
-        except Exception as exc:
-            self.get_logger().error(f"Laser write failed: {exc}")
+        else:
+            self.laser_pin = -1
+            self.gpio_initialized = False
+            self.laser_is_on = False
 
     def _fire_laser_for_duration(self) -> None:
         duration = max(0.0, self.laser_duration_sec)

@@ -1,26 +1,34 @@
 # opencv01
 
-单摄像头二维码识别与视觉微调包。
+Single-camera QR recognition and visual fine-tuning package.
 
-## 节点
+## Nodes
 
-- `qr_decoder_single`：唯一的二维码识别节点，默认使用 `/dev/video0`，发布 `/qr/id`、`/qr/offset_norm`、`/qr/aligned`、`/qr/debug_image`。
-- `qr_decoder`：兼容命令，和 `qr_decoder_single` 指向同一个单摄像头节点。
-- `qr_fine_tune`：订阅 `/qr/offset_norm` 和 `/qr/aligned`，输出 `/qr/fine_offset_body_cm`，给航点状态机做视觉微调。
+- `qr_decoder_single`: the only QR recognition node. It defaults to `/dev/video0` and publishes `/qr/id`, `/qr/offset_norm`, `/qr/aligned`, and `/qr/debug_image`.
+- `qr_decoder`: compatibility command that points to the same single-camera node.
+- `qr_fine_tune`: subscribes to `/qr/offset_norm` and `/qr/aligned`, then publishes `/qr/fine_offset_body_cm` for route fine tuning.
 
-## 正式飞行
+## Flight Mode
 
-正式任务由 `my_launch` 启动：
+Start the full mission stack with:
 
 ```bash
 ros2 launch my_launch demo1.launch.py
 ```
 
-`demo1.launch.py` 会设置 `qr_task_active_required:=true`。二维码节点只有在航点状态机发布 `/qr_task_active=true` 时才会解码，所以普通飞行途中遇到二维码不会发布 `/qr/id`，也不会误触发后续流程。
+`demo1.launch.py` sets `qr_task_active_required:=true`, so the QR node decodes only after the route state machine publishes `/qr_task_active=true`. During normal flight it will not publish `/qr/id`.
 
-正式任务中激光只听 `/qr/fire_laser`，航点状态机在到达目标点、视觉对准、记录/校验二维码后控制 pin10 点亮 1 秒。
+The laser is controlled by `/qr/fire_laser` in flight mode. After the drone reaches a QR target, aligns visually, and records or verifies the QR value, the route state machine turns pin10 on for 1 second.
 
-## 单独测试摄像头和激光
+## Standalone Camera And Laser Test
+
+The laser backend uses the Orange Pi/WiringOP `gpio` command. Check it first:
+
+```bash
+gpio readall
+```
+
+Then run:
 
 ```bash
 ros2 run opencv01 qr_decoder_single --ros-args \
@@ -32,9 +40,9 @@ ros2 run opencv01 qr_decoder_single --ros-args \
   -p standalone_laser_once:=true
 ```
 
-单独测试时，节点会正常解码；当二维码进入对准窗口后，pin10 激光自动点亮一次，持续 1 秒，不会重复打。
+In standalone mode, after the QR code enters the alignment window, wPi pin10 turns on once for 1 second.
 
-如果要同时看视觉微调输出，另开一个终端：
+To view fine-tune output in another terminal:
 
 ```bash
 ros2 run opencv01 qr_fine_tune
