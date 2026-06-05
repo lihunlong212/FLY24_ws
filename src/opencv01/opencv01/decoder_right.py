@@ -13,9 +13,6 @@ def main(args=None) -> None:
         topic_prefix="/qr",
         default_camera_device="/dev/video0",
     )
-    node.set_parameters([rclpy.parameter.Parameter("laser_pin", rclpy.Parameter.Type.INTEGER, 10)])
-    node.laser_pin = 10
-    node._init_gpio()
 
     try:
         rclpy.spin(node)

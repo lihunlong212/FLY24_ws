@@ -4,7 +4,6 @@ from __future__ import annotations
 import os
 import cv2
 import rclpy
-import wiringpi
 from cv_bridge import CvBridge
 from geometry_msgs.msg import Point
 from pyzbar import pyzbar
@@ -12,7 +11,9 @@ from rcl_interfaces.msg import SetParametersResult
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import Bool, String
-from wiringpi import GPIO
+
+wiringpi = None
+GPIO = None
 
 
 class QRVisionNodeBase(Node):
@@ -92,6 +93,24 @@ class QRVisionNodeBase(Node):
 
     def _init_gpio(self) -> None:
         if self.gpio_initialized or self.laser_pin == -1:
+            return
+
+        global wiringpi, GPIO
+        if wiringpi is None or GPIO is None:
+            try:
+                import wiringpi as wiringpi_module
+                from wiringpi import GPIO as gpio_module
+
+                wiringpi = wiringpi_module
+                GPIO = gpio_module
+            except ImportError:
+                self.get_logger().warn("wiringpi is not installed; laser disabled.")
+                self.laser_pin = -1
+                return
+
+        if wiringpi is None or GPIO is None:
+            self.get_logger().warn("wiringpi is not installed; laser disabled.")
+            self.laser_pin = -1
             return
         if wiringpi.wiringPiSetup() == -1:
             self.get_logger().error("GPIO setup failed; laser disabled.")
