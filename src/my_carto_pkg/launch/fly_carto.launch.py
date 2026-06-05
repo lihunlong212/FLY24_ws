@@ -15,67 +15,57 @@
   limitations under the License.
 """
 
-from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, ExecuteProcess, TimerAction
-from launch.conditions import IfCondition, UnlessCondition
-from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node, SetRemap
-from launch_ros.substitutions import FindPackageShare
-from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.actions import Shutdown
 import os
 
+from launch import LaunchDescription
+from launch.actions import IncludeLaunchDescription, TimerAction
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+
+
 def generate_launch_description():
-    ## ***** Launch arguments *****
     lidar_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(FindPackageShare('bluesea2').find('bluesea2'), 'launch', 'uart_lidar.launch')
+            os.path.join(
+                FindPackageShare("bluesea2").find("bluesea2"),
+                "launch",
+                "uart_lidar.launch",
+            )
         )
     )
 
-  ## ***** File paths ******
-    pkg_share = FindPackageShare('my_carto_pkg').find('my_carto_pkg')
-    urdf_dir = os.path.join(pkg_share, 'urdf')
-    urdf_file = os.path.join(urdf_dir, 'fly.urdf')
-    with open(urdf_file, 'r') as infp:
+    pkg_share = FindPackageShare("my_carto_pkg").find("my_carto_pkg")
+    urdf_file = os.path.join(pkg_share, "urdf", "fly.urdf")
+    with open(urdf_file, "r", encoding="utf-8") as infp:
         robot_desc = infp.read()
 
-    ## ***** Nodes *****
     robot_state_publisher_node = Node(
-        package = 'robot_state_publisher',
-        executable = 'robot_state_publisher',
+        package="robot_state_publisher",
+        executable="robot_state_publisher",
         parameters=[
-            {'robot_description': robot_desc},
-            {'use_sim_time': False}],
-        output = 'screen'
-        )
+            {"robot_description": robot_desc},
+            {"use_sim_time": False},
+        ],
+        output="screen",
+    )
 
     cartographer_node = Node(
-        package = 'cartographer_ros',
-        executable = 'cartographer_node',
-        parameters = [{'use_sim_time': False}],
-        arguments = [
-            '-configuration_directory', FindPackageShare('my_carto_pkg').find('my_carto_pkg') + '/configuration_files',
-            '-configuration_basename', 'amphi.lua'],
-        remappings = [
-            ('scan', 'scan')],
-        output = 'screen'
-        )
+        package="cartographer_ros",
+        executable="cartographer_node",
+        parameters=[{"use_sim_time": False}],
+        arguments=[
+            "-configuration_directory",
+            os.path.join(pkg_share, "configuration_files"),
+            "-configuration_basename",
+            "amphi.lua",
+        ],
+        remappings=[("scan", "scan")],
+        output="screen",
+    )
 
     return LaunchDescription([
-        # Step 1: Launch lidar_launch
-        TimerAction(
-            period=0.0,  # Immediately
-            actions=[lidar_launch]
-        ),
-        # Step 2: Launch robot_state_publisher_node after 2 seconds
-        TimerAction(
-            period=1.0,
-            actions=[robot_state_publisher_node]
-        ),
-        # Step 3: Launch cartographer_node after 4 seconds
-        TimerAction(
-            period=10.0,
-            actions=[cartographer_node]
-        ),
+        TimerAction(period=0.0, actions=[lidar_launch]),
+        TimerAction(period=1.0, actions=[robot_state_publisher_node]),
+        TimerAction(period=10.0, actions=[cartographer_node]),
     ])

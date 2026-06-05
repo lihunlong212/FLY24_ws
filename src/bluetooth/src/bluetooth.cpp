@@ -18,22 +18,24 @@ public:
   : Node("bluetooth_node")
   {
     declare_parameter<std::string>("port", "/dev/ttyS3");
-    declare_parameter<int>("baudrate", 9600);
+    declare_parameter<int>("baudrate", 115200);
 
     const std::string port = get_parameter("port").as_string();
     const int baudrate = get_parameter("baudrate").as_int();
 
     inventory_event_sub_ = create_subscription<std_msgs::msg::UInt8MultiArray>(
-      "/qr/inventory_event", rclcpp::QoS(10),
+      "/qr/inventory_event",
+      rclcpp::QoS(10),
       std::bind(&BluetoothNode::inventoryEventCallback, this, std::placeholders::_1));
     target_event_sub_ = create_subscription<std_msgs::msg::UInt8MultiArray>(
-      "/qr/target_event", rclcpp::QoS(10),
+      "/qr/target_event",
+      rclcpp::QoS(10),
       std::bind(&BluetoothNode::targetEventCallback, this, std::placeholders::_1));
 
     if (openAndConfigureSerialPort(port, baudrate)) {
-      RCLCPP_INFO(get_logger(), "Bluetooth inventory sender ready on %s.", port.c_str());
+      RCLCPP_INFO(get_logger(), "Bluetooth sender ready on %s at %d baud.", port.c_str(), baudrate);
     } else {
-      RCLCPP_WARN(get_logger(), "Bluetooth serial unavailable; inventory frames will be dropped.");
+      RCLCPP_WARN(get_logger(), "Bluetooth serial unavailable; ground station frames will be dropped.");
     }
   }
 
@@ -60,7 +62,7 @@ private:
       case 115200:
         return B115200;
       default:
-        return B9600;
+        return B115200;
     }
   }
 
@@ -101,7 +103,7 @@ private:
 
   void inventoryEventCallback(const std_msgs::msg::UInt8MultiArray::SharedPtr msg)
   {
-    if (msg->data.size() < 2) {
+    if (msg->data.size() < 2U) {
       RCLCPP_WARN(get_logger(), "Inventory event requires [slot_code, qr_value].");
       return;
     }
@@ -114,7 +116,7 @@ private:
 
   void targetEventCallback(const std_msgs::msg::UInt8MultiArray::SharedPtr msg)
   {
-    if (msg->data.size() < 2) {
+    if (msg->data.size() < 2U) {
       RCLCPP_WARN(get_logger(), "Target event requires [slot_code, qr_value].");
       return;
     }
@@ -133,21 +135,28 @@ private:
   {
     if (serial_fd_ < 0) {
       RCLCPP_WARN_THROTTLE(
-        get_logger(), *get_clock(), 2000,
+        get_logger(),
+        *get_clock(),
+        2000,
         "Bluetooth serial not open; dropped %s frame slot=0x%02X qr=0x%02X.",
-        label, static_cast<unsigned int>(slot_code), static_cast<unsigned int>(qr_value));
+        label,
+        static_cast<unsigned>(slot_code),
+        static_cast<unsigned>(qr_value));
       return;
     }
 
     const ssize_t written = write(serial_fd_, frame.data(), frame.size());
     if (written != static_cast<ssize_t>(frame.size())) {
-      RCLCPP_ERROR(get_logger(), "Failed to send complete Bluetooth inventory frame: %s", strerror(errno));
+      RCLCPP_ERROR(get_logger(), "Failed to send complete Bluetooth frame: %s", strerror(errno));
       return;
     }
 
     RCLCPP_INFO(
-      get_logger(), "Sent Bluetooth %s frame slot=0x%02X qr=0x%02X len=%zu.",
-      label, static_cast<unsigned int>(slot_code), static_cast<unsigned int>(qr_value),
+      get_logger(),
+      "Sent Bluetooth %s frame slot=0x%02X qr=0x%02X len=%zu.",
+      label,
+      static_cast<unsigned>(slot_code),
+      static_cast<unsigned>(qr_value),
       frame.size());
   }
 

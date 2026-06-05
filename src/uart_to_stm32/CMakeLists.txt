@@ -12,6 +12,7 @@ find_package(tf2_ros REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(Eigen3 REQUIRED)
 find_package(serial_comm REQUIRED)
 
@@ -32,6 +33,7 @@ ament_target_dependencies(uart_to_stm32_node
   tf2_geometry_msgs
   geometry_msgs
   std_msgs
+  std_srvs
   serial_comm
 )
 
@@ -55,6 +57,7 @@ ament_export_dependencies(
   tf2_geometry_msgs
   geometry_msgs
   std_msgs
+  std_srvs
   serial_comm
 )
 

@@ -1,14 +1,15 @@
 build/
 install/
 log/
+mylog/
+my_logs/
 
 __pycache__/
 *.py[cod]
-*$py.class
-
-.pytest_cache/
-.coverage
-htmlcov/
+*.so
+*.o
+*.a
 
 .vscode/
-.idea/
+.agents/
+.codex/
