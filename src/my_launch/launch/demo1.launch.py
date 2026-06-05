@@ -72,7 +72,8 @@ def generate_launch_description():
             {"decode_interval": 3},
             {"laser_pin": 10},
             {"laser_duration_sec": 1.0},
-            {"laser_task_active_required": True},
+            {"qr_task_active_required": True},
+            {"standalone_laser_once": False},
         ],
     )
 

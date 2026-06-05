@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import time
 import cv2
 import rclpy
 from cv_bridge import CvBridge
@@ -34,8 +35,10 @@ class QRVisionNodeBase(Node):
         self.declare_parameter("enable_gui", False)
         self.declare_parameter("decode_interval", 3)
         self.declare_parameter("laser_pin", -1)
+        self.declare_parameter("qr_task_active_required", False)
         self.declare_parameter("laser_task_active_required", False)
         self.declare_parameter("laser_duration_sec", 1.0)
+        self.declare_parameter("standalone_laser_once", True)
 
         self.camera_device = self.get_parameter("camera_device").value
         self.eps_x = float(self.get_parameter("eps_x").value)
@@ -46,10 +49,13 @@ class QRVisionNodeBase(Node):
         self.enable_gui = bool(self.get_parameter("enable_gui").value)
         self.decode_interval = max(1, int(self.get_parameter("decode_interval").value))
         self.laser_pin = int(self.get_parameter("laser_pin").value)
-        self.laser_task_active_required = bool(
+        self.qr_task_active_required = bool(
+            self.get_parameter("qr_task_active_required").value
+        ) or bool(
             self.get_parameter("laser_task_active_required").value
         )
         self.laser_duration_sec = float(self.get_parameter("laser_duration_sec").value)
+        self.standalone_laser_once = bool(self.get_parameter("standalone_laser_once").value)
 
         prefix = topic_prefix.strip().rstrip("/")
         self.topic_prefix = prefix if prefix.startswith("/") else "/" + prefix
@@ -66,7 +72,7 @@ class QRVisionNodeBase(Node):
         )
 
         self.camera_active = True
-        self.qr_task_active = not self.laser_task_active_required
+        self.qr_task_active = not self.qr_task_active_required
 
         self.bridge = CvBridge()
         self.cap = cv2.VideoCapture(self.camera_device)
@@ -78,6 +84,8 @@ class QRVisionNodeBase(Node):
         self.frame_count = 0
         self.previous_qr_data = ""
         self.laser_is_on = False
+        self.laser_off_deadline = None
+        self.standalone_laser_fired = False
         self.gpio_initialized = False
         self.should_show_window = False
 
@@ -88,7 +96,7 @@ class QRVisionNodeBase(Node):
 
         self.get_logger().info(
             f"{node_name} started: camera={self.camera_device}, prefix={self.topic_prefix}, "
-            f"laser_pin={self.laser_pin}"
+            f"laser_pin={self.laser_pin}, qr_task_active_required={self.qr_task_active_required}"
         )
 
     def _init_gpio(self) -> None:
@@ -107,23 +115,45 @@ class QRVisionNodeBase(Node):
                 self.get_logger().warn("wiringpi is not installed; laser disabled.")
                 self.laser_pin = -1
                 return
+            except BaseException as exc:
+                self.get_logger().warn(f"wiringpi import failed; laser disabled: {exc}")
+                self.laser_pin = -1
+                return
 
         if wiringpi is None or GPIO is None:
             self.get_logger().warn("wiringpi is not installed; laser disabled.")
             self.laser_pin = -1
             return
-        if wiringpi.wiringPiSetup() == -1:
+
+        try:
+            setup_result = wiringpi.wiringPiSetup()
+        except BaseException as exc:
+            self.get_logger().warn(f"GPIO setup failed; laser disabled: {exc}")
+            self.laser_pin = -1
+            return
+
+        if setup_result == -1:
             self.get_logger().error("GPIO setup failed; laser disabled.")
             self.laser_pin = -1
             return
 
-        wiringpi.pinMode(self.laser_pin, GPIO.OUTPUT)
-        wiringpi.digitalWrite(self.laser_pin, GPIO.HIGH)
+        try:
+            wiringpi.pinMode(self.laser_pin, GPIO.OUTPUT)
+            wiringpi.digitalWrite(self.laser_pin, GPIO.HIGH)
+        except Exception as exc:
+            self.get_logger().error(f"GPIO init write failed; laser disabled: {exc}")
+            self.laser_pin = -1
+            return
+
         self.gpio_initialized = True
         self.get_logger().info(f"GPIO {self.laser_pin} initialized for laser output.")
 
     def _set_laser(self, enabled: bool) -> None:
         if self.laser_pin == -1:
+            return
+        if enabled and not self.gpio_initialized:
+            self._init_gpio()
+        if not self.gpio_initialized:
             return
         try:
             wiringpi.digitalWrite(self.laser_pin, GPIO.LOW if enabled else GPIO.HIGH)
@@ -131,14 +161,32 @@ class QRVisionNodeBase(Node):
         except Exception as exc:
             self.get_logger().error(f"Laser write failed: {exc}")
 
+    def _fire_laser_for_duration(self) -> None:
+        duration = max(0.0, self.laser_duration_sec)
+        self._set_laser(True)
+        if self.laser_is_on:
+            self.laser_off_deadline = time.monotonic() + duration
+
+    def _cancel_laser(self) -> None:
+        self.laser_off_deadline = None
+        self._set_laser(False)
+
+    def _update_laser_timeout(self) -> None:
+        if self.laser_off_deadline is None:
+            return
+        if time.monotonic() >= self.laser_off_deadline:
+            self._cancel_laser()
+
     def _laser_fire_callback(self, msg: Bool) -> None:
         if not bool(msg.data) or not self.qr_task_active:
-            self._set_laser(False)
+            self._cancel_laser()
             return
-        self._set_laser(True)
+        self._fire_laser_for_duration()
 
     def _qr_task_active_callback(self, msg: Bool) -> None:
         self.qr_task_active = bool(msg.data)
+        if not self.qr_task_active:
+            self._cancel_laser()
 
     def _update_window_status(self) -> None:
         self.should_show_window = self.enable_gui and os.environ.get("DISPLAY") is not None
@@ -155,9 +203,27 @@ class QRVisionNodeBase(Node):
                 self._update_window_status()
             elif param.name == "decode_interval":
                 self.decode_interval = max(1, int(param.value))
+            elif param.name == "standalone_laser_once":
+                self.standalone_laser_once = bool(param.value)
         return SetParametersResult(successful=True)
 
+    def _maybe_fire_standalone_laser_once(self) -> None:
+        if self.qr_task_active_required:
+            return
+        if not self.standalone_laser_once or self.standalone_laser_fired:
+            return
+        if self.laser_pin == -1:
+            return
+
+        self.standalone_laser_fired = True
+        self.get_logger().info(
+            f"Standalone QR aligned; firing laser once for {self.laser_duration_sec:.1f}s."
+        )
+        self._fire_laser_for_duration()
+
     def process_frame(self) -> None:
+        self._update_laser_timeout()
+
         ret, frame = self.cap.read()
         if not ret:
             return
@@ -199,6 +265,8 @@ class QRVisionNodeBase(Node):
             aligned = self.stable_count >= self.stable_frames
             self.qr_id_pub.publish(String(data=qr_data))
             self.offset_pub.publish(Point(x=float(ex), y=float(ey), z=0.0))
+            if aligned:
+                self._maybe_fire_standalone_laser_once()
 
             if self.enable_debug or self.should_show_window:
                 cv2.circle(frame, (int(cx), int(cy)), 6, (0, 255, 0), -1)

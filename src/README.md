@@ -141,7 +141,7 @@ Launch：
 
 关键文件：
 
-- `opencv01/opencv01/decoder_common.py`：二维码识别基类（核心），打开单个摄像头并按 `decode_interval` 降频解码，发布 `{prefix}/id`、`{prefix}/offset_norm`、`{prefix}/aligned`、`{prefix}/debug_image`，并支持按 `/qr/fire_laser` 控制 GPIO pin10 激光。
+- `opencv01/opencv01/decoder_common.py`：二维码识别基类（核心），打开单个摄像头并按 `decode_interval` 降频解码，发布 `{prefix}/id`、`{prefix}/offset_norm`、`{prefix}/aligned`、`{prefix}/debug_image`。正式飞行时必须等 `/qr_task_active=true` 才解码；单独测试时可在对准后自动点亮 pin10 激光一次，持续 1 秒。
 - `opencv01/opencv01/decoder_single.py`：唯一的单摄像头入口，使用前缀 `/qr`，默认设备 `/dev/video0`。`qr_decoder` 与 `qr_decoder_single` 两个命令都指向它。
 - `opencv01/opencv01/qr_fine_tune.py`：视觉微调节点，订阅 `{input_prefix}/offset_norm` 与 `{input_prefix}/aligned`，对偏移做死区、EMA 滤波、步长限制与限幅后输出 `{output_topic}`（机体系 cm 级微调量），且在已对准时可持续输出 0 并重置内部状态以避免历史残留。
 
