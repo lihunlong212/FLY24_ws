@@ -24,10 +24,8 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'qr_decoder = opencv01.decoder:main',
-            'qr_decoder_single = opencv01.decoder_right:main',
-            'qr_decoder_left = opencv01.decoder_left:main',
-            'qr_decoder_right = opencv01.decoder_right:main',
+            'qr_decoder = opencv01.decoder_single:main',
+            'qr_decoder_single = opencv01.decoder_single:main',
             'qr_fine_tune = opencv01.qr_fine_tune:main',
         ],
     },

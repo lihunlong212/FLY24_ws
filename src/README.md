@@ -5,7 +5,7 @@
 ## 激光引脚快速测试（最简单）
 
 - 脚本位置：`LASER_PIN_TEST.py`（仓库根目录）
-- 本项目激光默认引脚：右侧 `wPi 10`，左侧 `wPi 13`
+- 本项目只有一个激光，默认引脚：`wPi 10`
 - 常用命令：
 
 ```bash
@@ -13,14 +13,6 @@ sudo python3 LASER_PIN_TEST.py on
 sudo python3 LASER_PIN_TEST.py off
 sudo python3 LASER_PIN_TEST.py pulse
 sudo python3 LASER_PIN_TEST.py blink --times 5 --interval 0.3
-
-# 单独控制右侧（wPi 10）
-sudo python3 LASER_PIN_TEST.py on --target right
-sudo python3 LASER_PIN_TEST.py off --target right
-
-# 单独控制左侧（wPi 13）
-sudo python3 LASER_PIN_TEST.py on --target left
-sudo python3 LASER_PIN_TEST.py off --target left
 ```
 
 ## 快速开始
@@ -149,11 +141,9 @@ Launch：
 
 关键文件：
 
-- `opencv01/opencv01/decoder_common.py`：二维码识别基类（核心），打开摄像头并按 `decode_interval` 降频解码，发布 `{prefix}/id`、`{prefix}/offset_norm`、`{prefix}/aligned`、`{prefix}/debug_image`，支持 GPIO pin10 激光控制（二维码 ID 变化且进入对准窗口时触发一次激光脉冲线程），并支持运行时动态开关 GUI 窗口显示。
-- `opencv01/opencv01/decoder_right.py`：当前单摄像头入口，使用前缀 `/qr`，默认设备 `/dev/video0`，激光引脚为 10。
-- `opencv01/opencv01/decoder_left.py`：兼容入口，转到同一个单摄像头逻辑。
+- `opencv01/opencv01/decoder_common.py`：二维码识别基类（核心），打开单个摄像头并按 `decode_interval` 降频解码，发布 `{prefix}/id`、`{prefix}/offset_norm`、`{prefix}/aligned`、`{prefix}/debug_image`，并支持按 `/qr/fire_laser` 控制 GPIO pin10 激光。
+- `opencv01/opencv01/decoder_single.py`：唯一的单摄像头入口，使用前缀 `/qr`，默认设备 `/dev/video0`。`qr_decoder` 与 `qr_decoder_single` 两个命令都指向它。
 - `opencv01/opencv01/qr_fine_tune.py`：视觉微调节点，订阅 `{input_prefix}/offset_norm` 与 `{input_prefix}/aligned`，对偏移做死区、EMA 滤波、步长限制与限幅后输出 `{output_topic}`（机体系 cm 级微调量），且在已对准时可持续输出 0 并重置内部状态以避免历史残留。
-- `opencv01/opencv01/decoder.py`：较早期的单节点识别脚本，直接读取摄像头并发布 `/qr_processed_image`、`/qr_code_data`、`/qr_code_position`。
 
 Launch：无（通常通过 `my_launch` 来启动）。
 
